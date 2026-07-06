@@ -13,9 +13,10 @@ COMPILE_TIMEOUT = 20
 RUN_TIMEOUT = 5
 
 
+# No RLIMIT_AS: Rosetta-emulated amd64 (local dev on ARM Macs) needs huge
+# address-space reservations; real memory is capped by the container itself.
 def limits():
     resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
-    resource.setrlimit(resource.RLIMIT_AS, (512 << 20, 512 << 20))
     resource.setrlimit(resource.RLIMIT_NPROC, (64, 64))
     resource.setrlimit(resource.RLIMIT_FSIZE, (10 << 20, 10 << 20))
 
