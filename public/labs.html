@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark light">
+<title>cpp-dojo — labs</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚔️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="labs.css">
+<script src="theme.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="logo">
+    <span class="logo-path">~/cpp-dojo/labs</span><span class="cursor">█</span>
+  </div>
+  <nav class="topnav">
+    <a class="nav-link" href="index.html">feed</a>
+    <a class="nav-link active" href="labs.html">labs</a>
+  </nav>
+  <div class="stats">
+    <button class="stat theme-btn" id="themeToggle" title="day / night">☀</button>
+  </div>
+</header>
+
+<nav class="chips" id="labTabs"></nav>
+
+<main class="lab-grid">
+  <section class="lab-stage-wrap">
+    <div class="lab-toolbar" id="labControls"></div>
+    <div class="lab-stage" id="labStage"></div>
+    <div class="lab-playbar">
+      <button class="btn pbtn" id="pbPlay" title="play/pause">▶</button>
+      <button class="btn pbtn" id="pbStep" title="one step">⏭</button>
+      <button class="btn pbtn" id="pbReset" title="reset">↺</button>
+      <select class="btn" id="pbSpeed" title="speed">
+        <option value="1400">0.5×</option>
+        <option value="700" selected>1×</option>
+        <option value="350">2×</option>
+        <option value="160">4×</option>
+      </select>
+      <div class="lab-caption" id="labCaption">pick a structure, feed it data, watch it think</div>
+    </div>
+  </section>
+  <aside class="lab-code">
+    <div class="lab-code-tab" id="labCodeTab">structure.hpp</div>
+    <div class="lab-code-body" id="labCodePanel"></div>
+  </aside>
+</main>
+
+<script src="highlight.js"></script>
+<script src="labs-core.js"></script>
+<script src="labs/treeview.js"></script>
+<script src="labs/vector.js"></script>
+<script src="labs/heap.js"></script>
+<script src="labs/segtree.js"></script>
+<script src="labs/bst.js"></script>
+<script src="labs/rbtree.js"></script>
+<script src="labs/graph.js"></script>
+<script>LabsCore.boot();</script>
+</body>
+</html>

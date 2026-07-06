@@ -1,6 +1,6 @@
 # Exercises
 
-Card format: `## exercise: Title`, optional `tags:`, prompt paragraphs, optional starter code as ```cpp block marked `// starter`, expected solution as the last ```cpp block. Checking ignores whitespace differences, so name things exactly as the prompt says.
+Card format: `## exercise: Title`, optional `tags:`, prompt paragraphs, optional starter code as ```cpp block marked `// starter`, expected solution as the last ```cpp block that is neither starter nor harness. A final ```cpp block marked `// harness` (never displayed) is a complete C++20 program with a `//__USER__` marker: the backend injects the typed code there, compiles with g++ -std=c++20, runs it, and the drill passes when stdout is `PASS`. Checking ignores whitespace differences, so name things exactly as the prompt says.
 
 ## exercise: Meyers Singleton
 tags: patterns, singleton
@@ -24,6 +24,22 @@ Config& Config::instance() {
 }
 ```
 
+```cpp
+// harness
+#include <cstdio>
+class Config {
+public:
+    static Config& instance();
+private:
+    Config() = default;
+};
+//__USER__
+int main() {
+    if (&Config::instance() != &Config::instance()) return 1;
+    std::puts("PASS");
+}
+```
+
 ## exercise: RAII file guard
 tags: raii, patterns
 
@@ -36,6 +52,16 @@ public:
     File(const char* path) : f(fopen(path, "r")) {}
     ~File() { if (f) fclose(f); }
 };
+```
+
+```cpp
+// harness
+#include <cstdio>
+//__USER__
+int main() {
+    { File f("/etc/hosts"); }
+    std::puts("PASS");
+}
 ```
 
 ## exercise: Make a class non-copyable
@@ -56,6 +82,19 @@ Connection(const Connection&) = delete;
 Connection& operator=(const Connection&) = delete;
 ```
 
+```cpp
+// harness
+#include <cstdio>
+#include <type_traits>
+class Connection {
+public:
+//__USER__
+};
+static_assert(!std::is_copy_constructible_v<Connection>);
+static_assert(!std::is_copy_assignable_v<Connection>);
+int main() { std::puts("PASS"); }
+```
+
 ## exercise: Factory function
 tags: patterns, factory
 
@@ -70,6 +109,22 @@ struct Circle : Shape { explicit Circle(double r); };
 ```cpp
 std::unique_ptr<Shape> make_circle(double r) {
     return std::make_unique<Circle>(r);
+}
+```
+
+```cpp
+// harness
+#include <memory>
+#include <cstdio>
+struct Shape { virtual ~Shape() = default; };
+struct Circle : Shape { double r; explicit Circle(double r) : r(r) {} };
+//__USER__
+int main() {
+    auto p = make_circle(2.5);
+    if (!p) return 1;
+    auto* c = dynamic_cast<Circle*>(p.get());
+    if (!c || c->r != 2.5) return 1;
+    std::puts("PASS");
 }
 ```
 
@@ -96,6 +151,27 @@ void click() {
 }
 ```
 
+```cpp
+// harness
+#include <vector>
+#include <functional>
+#include <cstdio>
+class Button {
+    std::vector<std::function<void()>> handlers;
+public:
+//__USER__
+};
+int main() {
+    Button b;
+    int n = 0;
+    b.on_click([&] { ++n; });
+    b.on_click([&] { n += 10; });
+    b.click();
+    if (n != 11) return 1;
+    std::puts("PASS");
+}
+```
+
 ## exercise: Strategy via lambda
 tags: patterns, strategy
 
@@ -103,6 +179,19 @@ Sort `v` (a `std::vector<int>`) in **descending** order using `std::sort` and a 
 
 ```cpp
 std::sort(v.begin(), v.end(), [](int a, int b) { return a > b; });
+```
+
+```cpp
+// harness
+#include <algorithm>
+#include <vector>
+#include <cstdio>
+int main() {
+    std::vector<int> v = {3, 1, 4, 1, 5, 9, 2, 6};
+//__USER__
+    if (!std::is_sorted(v.begin(), v.end(), [](int a, int b) { return a > b; })) return 1;
+    std::puts("PASS");
+}
 ```
 
 ## exercise: Builder with method chaining
@@ -126,10 +215,29 @@ QueryBuilder& title(std::string t) {
 }
 ```
 
+```cpp
+// harness
+#include <string>
+#include <cstdio>
+class QueryBuilder {
+    std::string title_;
+public:
+//__USER__
+    const std::string& get() const { return title_; }
+};
+int main() {
+    QueryBuilder q;
+    if (&q.title("a") != &q) return 1;
+    q.title("x").title("y");
+    if (q.get() != "y") return 1;
+    std::puts("PASS");
+}
+```
+
 ## exercise: Visitor with std::variant
 tags: patterns, visitor, variant
 
-`v` is a `std::variant<int, std::string>`. Using `std::visit` and the `overloaded` idiom, return `x * 2` for an `int x` and `s.size()` for a `const std::string& s`. Assign the result to `auto n`.
+`v` is a `std::variant<int, std::string>`. Using `std::visit` and the `overloaded` idiom, return `std::size_t(x * 2)` for an `int x` and `s.size()` for a `const std::string& s` (both lambdas must return the same type — `std::visit` requires it). Assign the result to `auto n`.
 
 ```cpp
 // starter
@@ -138,9 +246,26 @@ template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
 
 ```cpp
 auto n = std::visit(overloaded{
-    [](int x) { return x * 2; },
+    [](int x) { return std::size_t(x * 2); },
     [](const std::string& s) { return s.size(); }
 }, v);
+```
+
+```cpp
+// harness
+#include <variant>
+#include <string>
+#include <cstdio>
+template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
+std::size_t run(std::variant<int, std::string> v) {
+//__USER__
+    return n;
+}
+int main() {
+    if (run(21) != 42) return 1;
+    if (run(std::string("hello")) != 5) return 1;
+    std::puts("PASS");
+}
 ```
 
 ## exercise: CRTP base
@@ -155,6 +280,26 @@ struct Printable {
         std::cout << static_cast<const D&>(*this);
     }
 };
+```
+
+```cpp
+// harness
+#include <iostream>
+#include <sstream>
+#include <cstdio>
+//__USER__
+struct Point : Printable<Point> {
+    int x = 7;
+};
+std::ostream& operator<<(std::ostream& os, const Point& p) { return os << "P" << p.x; }
+int main() {
+    std::ostringstream out;
+    auto* old = std::cout.rdbuf(out.rdbuf());
+    Point{}.print();
+    std::cout.rdbuf(old);
+    if (out.str() != "P7") return 1;
+    std::puts("PASS");
+}
 ```
 
 ## exercise: Scoped timer (RAII)
@@ -174,6 +319,24 @@ public:
 };
 ```
 
+```cpp
+// harness
+#include <chrono>
+#include <iostream>
+#include <sstream>
+#include <cstdio>
+//__USER__
+int main() {
+    std::ostringstream out;
+    auto* old = std::cout.rdbuf(out.rdbuf());
+    { Timer t; }
+    std::cout.rdbuf(old);
+    auto s = out.str();
+    if (s.size() < 4 || s.substr(s.size() - 3) != "ms\n") return 1;
+    std::puts("PASS");
+}
+```
+
 ## exercise: Generic max
 tags: templates, core
 
@@ -183,6 +346,18 @@ Write a function template `maxof` taking `class T` and two `const T&` parameters
 template <class T>
 const T& maxof(const T& a, const T& b) {
     return a < b ? b : a;
+}
+```
+
+```cpp
+// harness
+#include <string>
+#include <cstdio>
+//__USER__
+int main() {
+    if (maxof(2, 3) != 3) return 1;
+    if (maxof(std::string("apple"), std::string("banana")) != "banana") return 1;
+    std::puts("PASS");
 }
 ```
 
@@ -204,5 +379,27 @@ public:
 Buffer(Buffer&& other) noexcept : data(other.data), n(other.n) {
     other.data = nullptr;
     other.n = 0;
+}
+```
+
+```cpp
+// harness
+#include <cstddef>
+#include <cstdio>
+#include <utility>
+class Buffer {
+public:
+    int* data; size_t n;
+    Buffer(size_t k) : data(new int[k]), n(k) {}
+    ~Buffer() { delete[] data; }
+//__USER__
+};
+int main() {
+    Buffer a(5);
+    int* p = a.data;
+    Buffer b(std::move(a));
+    if (b.data != p || b.n != 5) return 1;
+    if (a.data != nullptr || a.n != 0) return 1;
+    std::puts("PASS");
 }
 ```

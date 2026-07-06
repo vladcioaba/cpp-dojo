@@ -1,4 +1,14 @@
-/* cpp-dojo — feed engine. No deps, no build. */
+/* cpp-dojo — feed engine. No deps, no build. Highlighting from highlight.js (window.CPP). */
+
+const { esc, inline, codeBlock } = window.CPP;
+
+/* Content database lives openly on GitHub; the app fetches it from raw
+   first (so pushes show up without redeploy), local paths as fallback. */
+const CONTENT_SOURCES = [
+  "https://raw.githubusercontent.com/vladcioaba/cpp-dojo/main/",
+  "../",
+  "",
+];
 
 const FILES = [
   ["fact", "content/facts.md"],
@@ -7,6 +17,7 @@ const FILES = [
   ["snippet", "content/snippets.md"],
 ];
 
+const API_RUN = "/api/run";
 const XP = { quizRight: 10, quizWrong: 2, exercise: 20 };
 
 /* ── state ───────────────────────────────────────────────────── */
@@ -79,9 +90,13 @@ function parseBlocks(body) {
       i++;
       while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
       i++;
-      const code = buf.join("\n");
       const starter = /^\s*\/\/\s*starter\b/.test(buf[0] || "");
-      blocks.push({ kind: "code", code: starter ? buf.slice(1).join("\n") : code, starter });
+      const harness = /^\s*\/\/\s*harness\b/.test(buf[0] || "");
+      blocks.push({
+        kind: "code",
+        code: (starter || harness) ? buf.slice(1).join("\n") : buf.join("\n"),
+        starter, harness,
+      });
     } else if (/^- \[[ x]\] /.test(line)) {
       const opts = [];
       while (i < lines.length && /^- \[[ x]\] /.test(lines[i])) {
@@ -102,60 +117,6 @@ function parseBlocks(body) {
     }
   }
   return blocks;
-}
-
-/* ── inline markdown + C++ highlighter ───────────────────────── */
-
-function esc(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function inline(s) {
-  return esc(s)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^*]+)\*/g, "<em>$1</em>");
-}
-
-const KW = new RegExp("\\b(" + (
-  "alignas alignof auto bool break case catch char char8_t char16_t char32_t class concept const " +
-  "consteval constexpr constinit const_cast continue co_await co_return co_yield decltype default " +
-  "delete do double dynamic_cast else enum explicit export extern false final float for friend goto " +
-  "if inline int long mutable namespace new noexcept nullptr operator override private protected " +
-  "public reinterpret_cast requires return short signed sizeof static static_assert static_cast " +
-  "struct switch template this thread_local throw true try typedef typeid typename union unsigned " +
-  "using virtual void volatile wchar_t while"
-).trim().split(/\s+/).join("|") + ")\\b", "g");
-
-const TYPES = /\b(std|string_view|string|vector|map|set|unique_ptr|shared_ptr|weak_ptr|enable_shared_from_this|function|variant|optional|mutex|lock_guard|jthread|fstream|FILE|size_t|ptrdiff_t|chrono|steady_clock|time_point|milliseconds|duration_cast|cout|cin|endl|make_unique|make_shared|move|visit|sort|views|reverse|less|is_integral_v)\b/g;
-
-const TOKEN = /(\/\*[\s\S]*?\*\/|\/\/[^\n]*)|("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|(^[ \t]*#[^\n]*)/gm;
-
-function highlight(code) {
-  let out = "", last = 0, m;
-  TOKEN.lastIndex = 0;
-  while ((m = TOKEN.exec(code))) {
-    out += plain(code.slice(last, m.index));
-    if (m[1]) out += `<span class="tk-c">${esc(m[1])}</span>`;
-    else if (m[2]) out += `<span class="tk-s">${esc(m[2])}</span>`;
-    else out += `<span class="tk-p">${esc(m[3])}</span>`;
-    last = m.index + m[0].length;
-  }
-  out += plain(code.slice(last));
-  return out;
-}
-
-function plain(s) {
-  return esc(s)
-    .replace(KW, '<span class="tk-k">$1</span>')
-    .replace(TYPES, '<span class="tk-t">$1</span>')
-    .replace(/\b(\d[\d.'xXbBa-fA-F]*)\b/g, '<span class="tk-n">$1</span>');
-}
-
-function codeBlock(code) {
-  const lines = code.split("\n");
-  const gutter = lines.map((_, i) => i + 1).join("\n");
-  return `<div class="code"><div class="gutter">${gutter}</div><pre>${highlight(code)}</pre></div>`;
 }
 
 /* ── rendering ───────────────────────────────────────────────── */
@@ -256,10 +217,13 @@ function renderQuiz(card, body) {
     body.insertAdjacentHTML("beforeend", `<div class="explain">${inline(quote.text)}</div>`);
 }
 
+/* Exercise: local string-match is the offline fallback; when the compile
+   backend is reachable, the harness verdict (g++ + runtime PASS) wins. */
 function renderExercise(card, body) {
   const codes = card.blocks.filter(b => b.kind === "code");
   const starter = codes.find(b => b.starter);
-  const solution = codes.filter(b => !b.starter).pop();
+  const harness = codes.find(b => b.harness);
+  const solution = codes.filter(b => !b.starter && !b.harness).pop();
 
   for (const b of card.blocks) {
     if (b.kind === "p") body.insertAdjacentHTML("beforeend", `<p>${inline(b.text)}</p>`);
@@ -283,6 +247,10 @@ function renderExercise(card, body) {
   verdict.className = "verdict";
   actions.append(check, reveal, verdict);
 
+  const out = document.createElement("pre");
+  out.className = "compile-out";
+  out.hidden = true;
+
   const solWrap = document.createElement("div");
   solWrap.className = "solution";
   solWrap.hidden = true;
@@ -294,21 +262,61 @@ function renderExercise(card, body) {
     verdict.className = "verdict ok";
   }
 
-  check.onclick = () => {
+  const pass = () => {
+    verdict.textContent = "✓ 0 errors, 0 warnings";
+    verdict.className = "verdict ok";
+    if (state.done[card.id] !== "ok") award(card.id, "ok", XP.exercise, check);
+    markDone(card.id);
+  };
+
+  check.onclick = async () => {
     if (!solution) return;
-    if (norm(ta.value) === norm(solution.code)) {
-      verdict.textContent = "✓ 0 errors, 0 warnings";
-      verdict.className = "verdict ok";
-      if (state.done[card.id] !== "ok") award(card.id, "ok", XP.exercise, check);
-      markDone(card.id);
-    } else {
+    if (harness) {
+      verdict.textContent = "⧗ compiling…";
+      verdict.className = "verdict";
+      check.disabled = true;
+      const res = await compileRun(harness.code.replace("//__USER__", ta.value));
+      check.disabled = false;
+      if (res) {
+        out.hidden = false;
+        if (!res.compile.ok) {
+          out.textContent = "$ g++ -std=c++20 main.cpp\n" + res.compile.stderr.trim();
+          verdict.textContent = "✗ compile error";
+          verdict.className = "verdict no";
+        } else if (res.run.exit === 0 && /\bPASS\b/.test(res.run.stdout)) {
+          out.textContent = "$ g++ -std=c++20 main.cpp && ./a.out\n" + res.run.stdout.trim();
+          pass();
+        } else {
+          out.textContent = "$ ./a.out\n" + (res.run.stdout + "\n" + res.run.stderr).trim() +
+            `\n[exit ${res.run.exit}]`;
+          verdict.textContent = "✗ runtime check failed";
+          verdict.className = "verdict no";
+        }
+        return;
+      }
+      // backend unreachable → fall through to string match
+    }
+    if (norm(ta.value) === norm(solution.code)) pass();
+    else {
       verdict.textContent = "✗ doesn't match yet";
       verdict.className = "verdict no";
     }
   };
   reveal.onclick = () => { solWrap.hidden = !solWrap.hidden; };
 
-  body.append(ta, actions, solWrap);
+  body.append(ta, actions, out, solWrap);
+}
+
+async function compileRun(code) {
+  try {
+    const r = await fetch(API_RUN, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
 }
 
 function norm(code) {
@@ -401,6 +409,16 @@ document.addEventListener("keydown", e => {
   cards[Math.max(0, Math.min(cards.length - 1, next))]?.scrollIntoView({ block: "start" });
 });
 
+async function fetchContent(path) {
+  for (const base of CONTENT_SOURCES) {
+    try {
+      const r = await fetch(base + path);
+      if (r.ok) return await r.text();
+    } catch { /* next source */ }
+  }
+  throw new Error("all sources failed for " + path);
+}
+
 async function boot() {
   tickStreak();
   document.getElementById("streak").textContent = state.streak;
@@ -410,19 +428,14 @@ async function boot() {
 
   try {
     const texts = await Promise.all(
-      FILES.map(([type, path]) =>
-        fetch(path).then(r => {
-          if (!r.ok) throw new Error(path + " → " + r.status);
-          return r.text().then(t => [type, t]);
-        })
-      )
+      FILES.map(([type, path]) => fetchContent(path).then(t => [type, t]))
     );
     allCards = dailyMix(texts.flatMap(([type, t]) => parseCards(t, type)));
     render(allCards);
   } catch (err) {
     feed.innerHTML = `<div class="error-card">failed to load content: ${esc(String(err))}<br><br>
-      if you opened index.html directly, serve it instead:<br>
-      <strong>python3 -m http.server 8000</strong> → http://localhost:8000</div>`;
+      content loads from GitHub raw or a local server — check network, or serve the repo root:<br>
+      <strong>python3 -m http.server 8000</strong> → http://localhost:8000/public/</div>`;
   }
 }
 
