@@ -1,0 +1,16 @@
+{
+  "appId": "dev.cppdojo.app",
+  "appName": "cpp-dojo",
+  "webDir": "www",
+  "server": {
+    "url": "https://cpp-dojo.vlad-cioaba.workers.dev",
+    "cleartext": false
+  },
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#0a0c10"
+  },
+  "android": {
+    "backgroundColor": "#0a0c10"
+  }
+}

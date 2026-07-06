@@ -42,6 +42,14 @@ python3 -m http.server 8000   # → http://localhost:8000/public/
 
 Code gets extracted (vision), analyzed (bugs, UB, the modern way, which pattern), appended to `content/snippets.md`, committed and pushed — in the feed by next morning, no redeploy needed.
 
+## Install / mobile / iOS
+
+The app is an installable **PWA** — one web codebase delivered everywhere:
+
+- **Any browser** (desktop / tablet / phone): just open the URL.
+- **Install to home screen / dock**: an "install" button appears where supported (Chrome, Edge, Android); on iOS Safari use Share → Add to Home Screen. Installed, it runs full-screen with an app icon and works offline for the shell (service worker in `public/sw.js` caches the app; `/api/*` and content always hit the network).
+- **Native iOS / Android app** (App Store / Play): wrapped with Capacitor in `mobile/` — reuses 100% of the web app. See `mobile/README.md`. The iOS build needs your Mac + Xcode + an Apple Developer account (signing/enrollment are your steps).
+
 ## Content format
 
 One card per `##` section:
@@ -66,3 +74,4 @@ npx wrangler deploy     # builds + pushes the container image too (needs Docker)
 - Leveled curriculum: novice → grandmaster, XP-gated
 - Spaced repetition of failed cards
 - More labs: hash map open addressing, B-tree, LRU cache
+- Ship the Capacitor iOS/Android builds to the stores
