@@ -1,6 +1,8 @@
 /* cpp-dojo — day/night. Runs before paint; toggle via #themeToggle. */
 (function () {
   const KEY = "cppdojo-theme";
+  const q = new URLSearchParams(location.search).get("theme");
+  if (q === "light" || q === "dark") localStorage.setItem(KEY, q);
   function resolve() {
     const saved = localStorage.getItem(KEY);
     if (saved === "light" || saved === "dark") return saved;
