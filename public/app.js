@@ -332,10 +332,27 @@ function markDone(id) {
     tab.insertAdjacentHTML("beforeend", '<span class="tab-done">✓</span>');
 }
 
+/* leaderboard sync — profile {name, token} is created on the ranks page */
+let syncTimer = null;
+function syncScore() {
+  let p = null;
+  try { p = JSON.parse(localStorage.getItem("cppdojo-profile") || "null"); } catch { }
+  if (!p) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    fetch("/api/score", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: p.token, name: p.name, xp: state.xp, streak: state.streak }),
+    }).catch(() => {});
+  }, 1500);
+}
+
 function award(id, status, xp, anchorEl) {
   state.done[id] = status;
   state.xp += xp;
   save();
+  syncScore();
   document.getElementById("xp").textContent = state.xp;
   if (anchorEl && xp > 0) {
     const r = anchorEl.getBoundingClientRect();
@@ -425,6 +442,7 @@ async function boot() {
   document.getElementById("xp").textContent = state.xp;
   if (state.streak > 0) document.querySelector(".stat-streak").classList.add("lit");
   document.getElementById("daymix").textContent = `mix of ${dayStr()}`;
+  syncScore(); // streak may have ticked — push it to the board
 
   try {
     const texts = await Promise.all(

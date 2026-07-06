@@ -17,11 +17,13 @@
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "COMPILER", "class_name": "Compiler" }
+      { "name": "COMPILER", "class_name": "Compiler" },
+      { "name": "LEADERBOARD", "class_name": "Leaderboard" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["Compiler"] }
+    { "tag": "v1", "new_sqlite_classes": ["Compiler"] },
+    { "tag": "v2", "new_sqlite_classes": ["Leaderboard"] }
   ],
   "observability": { "enabled": true }
 }

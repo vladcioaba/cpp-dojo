@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark light">
+<title>cpp-dojo — ranks</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚔️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="theme.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="logo">
+    <span class="logo-path">~/cpp-dojo/ranks</span><span class="cursor">█</span>
+  </div>
+  <nav class="topnav">
+    <a class="nav-link" href="index.html">feed</a>
+    <a class="nav-link" href="labs.html">labs</a>
+    <a class="nav-link active" href="ranks.html">ranks</a>
+  </nav>
+  <div class="stats">
+    <button class="stat theme-btn" id="themeToggle" title="day / night">☀</button>
+  </div>
+</header>
+
+<main class="lb-wrap">
+  <section class="card seen lb-card">
+    <div class="card-tab">
+      <span class="tab-dot" style="background: var(--amber)"></span>
+      <span class="tab-name">leaderboard.sql</span>
+      <span class="tab-tags"><span class="tag" id="lbCount"></span></span>
+    </div>
+    <div class="card-body">
+      <div class="lb-claim" id="lbClaim">
+        <input type="text" id="lbName" maxlength="20" placeholder="pick a handle" spellcheck="false">
+        <button class="btn btn-check" id="lbJoin">join board ▸</button>
+        <span class="lb-hint">no account — your handle rides an anonymous token in this browser</span>
+      </div>
+      <table class="lb-table" id="lbTable" hidden>
+        <thead><tr><th>#</th><th>handle</th><th class="num">xp</th><th class="num">streak</th></tr></thead>
+        <tbody id="lbBody"></tbody>
+      </table>
+      <div class="lb-empty" id="lbEmpty" hidden>nobody on the board yet — be first</div>
+      <div class="lb-you" id="lbYou" hidden></div>
+    </div>
+  </section>
+</main>
+
+<footer class="hints">
+  <span>xp earned in the feed syncs here automatically</span>
+  <span id="lbUpdated"></span>
+</footer>
+
+<script src="ranks.js"></script>
+</body>
+</html>

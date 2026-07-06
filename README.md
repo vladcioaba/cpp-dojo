@@ -2,7 +2,7 @@
 
 Daily C++ grind, shaped like a social feed. Open it every morning, scroll cards one at a time: **facts**, **quizzes**, **write-the-code drills** with a *real compiler* behind the check button, **snippets** captured from LinkedIn & co. with LLM analysis — plus **animated visualization labs** for the classic data structures. Streak + XP tracked locally. Day/night theme.
 
-**Live:** https://cpp-dojo.vlad-cioaba.workers.dev — feed at `/`, labs at `/labs`
+**Live:** https://cpp-dojo.vlad-cioaba.workers.dev — feed at `/`, labs at `/labs`, leaderboard at `/ranks`
 
 ## Architecture
 
@@ -10,6 +10,7 @@ Daily C++ grind, shaped like a social feed. Open it every morning, scroll cards 
 - **App — Cloudflare Worker static assets** (`public/`, no build step).
 - **Compile service — Docker container on Cloudflare Containers** (`container/`): alpine + g++, a small Python server. `POST /api/run {code}` → compile with `g++ -std=c++20`, run with rlimits + timeouts, return JSON. The Worker (`src/worker.js`) routes `/api/run` to the container (Durable Object, auto-sleeps after 15 min idle).
 - **Drills really compile.** Each exercise in `content/exercises.md` carries a hidden `// harness` block — a full program with `//__USER__` where your typed code injects, plus runtime checks that print `PASS`. Backend unreachable → falls back to normalized string match.
+- **Leaderboard — Durable Object with SQLite** (`/ranks`): pick a handle, XP/streak sync automatically from the feed. No accounts — identity is an anonymous UUID token in localStorage. Server accepts only monotonically growing XP per token; clearing the browser means a fresh start under a new token.
 
 ## Labs (`/labs`)
 
