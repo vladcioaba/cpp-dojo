@@ -36,10 +36,23 @@
       <span class="tab-tags"><span class="tag" id="lbCount"></span></span>
     </div>
     <div class="card-body">
-      <div class="lb-claim" id="lbClaim">
-        <input type="text" id="lbName" maxlength="20" placeholder="pick a handle" spellcheck="false">
-        <button class="btn btn-check" id="lbJoin">join board ▸</button>
-        <span class="lb-hint">no account — your handle rides an anonymous token in this browser</span>
+      <div class="lb-auth" id="lbAuth">
+        <div class="lb-tabs">
+          <button class="lb-tab active" data-mode="login">log in</button>
+          <button class="lb-tab" data-mode="register">sign up</button>
+        </div>
+        <form class="lb-form" id="lbForm" autocomplete="on">
+          <input type="text" id="fNick" maxlength="20" placeholder="nickname" spellcheck="false" autocomplete="nickname" hidden>
+          <input type="email" id="fEmail" maxlength="120" placeholder="email" autocomplete="email" required>
+          <input type="password" id="fPass" placeholder="password (min 8)" autocomplete="current-password" required>
+          <button class="btn btn-check" id="fSubmit" type="submit">log in ▸</button>
+          <span class="lb-msg" id="fMsg"></span>
+        </form>
+      </div>
+      <div class="lb-me" id="lbMe" hidden>
+        <span class="lb-me-nick" id="meNick"></span>
+        <span class="lb-me-stats" id="meStats"></span>
+        <button class="btn" id="btnLogout">log out</button>
       </div>
       <table class="lb-table" id="lbTable" hidden>
         <thead><tr><th>#</th><th>handle</th><th class="num">xp</th><th class="num">streak</th></tr></thead>

@@ -332,18 +332,26 @@ function markDone(id) {
     tab.insertAdjacentHTML("beforeend", '<span class="tab-done">✓</span>');
 }
 
-/* leaderboard sync — profile {name, token} is created on the ranks page */
+/* leaderboard sync — prefers a logged-in account session (cppdojo-auth),
+   falls back to the anonymous handle (cppdojo-profile). Both set on /ranks. */
 let syncTimer = null;
 function syncScore() {
-  let p = null;
-  try { p = JSON.parse(localStorage.getItem("cppdojo-profile") || "null"); } catch { }
-  if (!p) return;
+  let body = null;
+  try {
+    const a = JSON.parse(localStorage.getItem("cppdojo-auth") || "null");
+    if (a) body = { session: a.session, xp: state.xp, streak: state.streak };
+    else {
+      const p = JSON.parse(localStorage.getItem("cppdojo-profile") || "null");
+      if (p) body = { token: p.token, name: p.name, xp: state.xp, streak: state.streak };
+    }
+  } catch { }
+  if (!body) return;
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
     fetch("/api/score", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: p.token, name: p.name, xp: state.xp, streak: state.streak }),
+      body: JSON.stringify(body),
     }).catch(() => {});
   }, 1500);
 }

@@ -20,6 +20,11 @@
       "name": "RUN_LIMIT",
       "namespace_id": "1001",
       "simple": { "limit": 10, "period": 10 }
+    },
+    {
+      "name": "AUTH_LIMIT",
+      "namespace_id": "1002",
+      "simple": { "limit": 8, "period": 60 }
     }
   ],
   "durable_objects": {
