@@ -1,5 +1,7 @@
 import { Container } from "@cloudflare/containers";
 
+const COMPILER_POOL = 3; // number of container buckets; keep <= max_instances
+
 export class Compiler extends Container {
   defaultPort = 8080;
   sleepAfter = "15m";
@@ -81,11 +83,24 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/run" && request.method === "POST") {
+      // Per-IP rate limit — the compile service runs untrusted code, so cap
+      // how fast any one client can hammer it (DoS + billed-compute abuse).
+      const ip = request.headers.get("CF-Connecting-IP") || "anon";
+      const { success } = await env.RUN_LIMIT.limit({ key: ip });
+      if (!success) {
+        return Response.json(
+          { error: "rate limited — slow down (max ~10 compiles / 10s)" },
+          { status: 429, headers: { "Retry-After": "10" } });
+      }
+
       const body = await request.text();
       if (body.length > 256 * 1024) {
         return Response.json({ error: "body too large" }, { status: 413 });
       }
-      const container = env.COMPILER.getByName("main");
+      // Spread load across a small pool instead of one shared instance, so a
+      // single abuser degrades at most one bucket, not everyone.
+      const bucket = "run-" + Math.floor(Math.random() * COMPILER_POOL);
+      const container = env.COMPILER.getByName(bucket);
       const res = await container.fetch("http://compiler/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
