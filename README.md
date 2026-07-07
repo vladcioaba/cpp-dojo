@@ -1,16 +1,35 @@
 # cpp-dojo ⚔️
 
-Daily C++ grind, shaped like a social feed. Open it every morning, scroll cards one at a time: **facts**, **quizzes**, **write-the-code drills** with a *real compiler* behind the check button, **snippets** captured from LinkedIn & co. with LLM analysis — plus **animated visualization labs** for the classic data structures. Streak + XP tracked locally. Day/night theme.
+The tool to train from zero to C++ grandmaster — and for FAANG / HFT interviews. A social-feed-style daily grind (facts, quizzes, real-compiler write-drills, snippets), **LeetCode-style DS&A problems** run against an actual g++ backend, **animated algorithm/data-structure labs**, timed **sprints**, spaced repetition, accounts + a leaderboard. Web, installable PWA, and native iOS/Android from one codebase.
 
 **Live:** https://cpp-dojo.vlad-cioaba.workers.dev — feed `/`, labs `/labs`, sprint `/sprint`, leaderboard `/ranks`
 
+## Repo layout
+
+```
+cpp-dojo/                    ← code (this repo)
+├── datasets/                ← git submodule → cpp-dojo-datasets (all content)
+├── frontend/
+│   ├── app.web/             ← the web app (Cloudflare Worker static assets)
+│   ├── app.ios/             ← Capacitor iOS (Xcode)
+│   └── app.android/         ← Capacitor Android
+├── backend/
+│   ├── src/worker.js        ← Worker: content proxy, /api/run, auth, leaderboard
+│   └── container/           ← g++ compile sandbox (Cloudflare Containers)
+└── wrangler.jsonc
+```
+
+Content lives in a **separate repo** ([cpp-dojo-datasets](https://github.com/vladcioaba/cpp-dojo-datasets)), added here as a submodule — one card per file under `{topic}/{NN}_{headline}_{level}.md`, concatenated into `bundle.md`.
+
 ## Architecture
 
-- **Content database — open on GitHub (this repo).** All cards are markdown in `content/`; the app fetches them from `raw.githubusercontent.com` at load, so pushing a content change updates the live site without a redeploy. `content/snippets.md` is the single page holding every captured snippet.
-- **App — Cloudflare Worker static assets** (`public/`, no build step).
-- **Compile service — Docker container on Cloudflare Containers** (`container/`): alpine + g++, a small Python server. `POST /api/run {code}` → compile with `g++ -std=c++20`, run with rlimits + timeouts, return JSON. The Worker (`src/worker.js`) routes `/api/run` to the container (Durable Object, auto-sleeps after 15 min idle).
-- **Drills really compile.** Each exercise in `content/exercises.md` carries a hidden `// harness` block — a full program with `//__USER__` where your typed code injects, plus runtime checks that print `PASS`. Backend unreachable → falls back to normalized string match.
-- **Leaderboard — Durable Object with SQLite** (`/ranks`): pick a handle, XP/streak sync automatically from the feed. No accounts — identity is an anonymous UUID token in localStorage. Server accepts only monotonically growing XP per token; clearing the browser means a fresh start under a new token.
+- **Content — separate repo, loaded from GitHub.** The backend serves `GET /content/bundle.md` by proxying the datasets repo's GitHub raw (edge-cached 5 min), so the browser loads one same-origin file and content updates without redeploying the app.
+- **App — Cloudflare Worker static assets** (`frontend/app.web`, no build step).
+- **Compile service — Docker container on Cloudflare Containers** (`backend/container`): alpine + g++, a hardened Python sandbox (unprivileged, per-run process reaping, fork-bomb cap, rate-limited). `POST /api/run {code}` → compile `g++ -std=c++20`, run, return JSON.
+- **Drills & challenges really compile.** Each carries a hidden `// harness` — a full program with `//__USER__` where your code injects, plus runtime checks that print `PASS`. The whole FAANG bank (27 problems) is compile-verified.
+- **Leaderboard + accounts — Durable Object with SQLite** (`/ranks`): sign up (nickname + email + password, PBKDF2-hashed) or play anonymously; XP/streak sync from the feed.
+- **Spaced repetition.** Missed quizzes/challenges resurface on an SM-2 schedule via the **review** filter.
+- **Native apps** — Capacitor shells in `frontend/app.{ios,android}` load the live site (`server.url`), so one deploy updates everything.
 
 ## Labs (`/labs`)
 
@@ -24,7 +43,9 @@ Animated, step-by-step, each with the C++ implementation alongside — the execu
 | bst | insert/find walking the compare path; "worst case" button shows sorted input degenerating to a list |
 | rb tree | insert fixup live: red uncle → recolor; black uncle → rotation — nodes glide into balance. Sorted 1..15 stays log-height |
 | graph | BFS ring vs DFS dive vs A* beeline on a wall-drawing grid |
-| order book | price-time-priority limit book + matching engine; submit crossing orders, watch partial/full fills against the best opposite level |
+| order book | price-time-priority limit book + matching engine; submit crossing orders, watch partial/full fills |
+| verilog | sequential-logic waveform sim — pick a circuit (D-FF, counter, shift reg, T-FF), step the clock, watch the timing diagram; teaches non-blocking `<=` |
+| market maker | P&L sim: random-walk mid, you quote a spread, flow fills you — spread capture vs adverse selection vs inventory risk, live charts |
 
 ## Run locally
 
