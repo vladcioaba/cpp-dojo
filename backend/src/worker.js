@@ -214,6 +214,22 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    // Content proxy: the backend loads the learning bundle straight from the
+    // datasets repo's GitHub raw and serves it same-origin (edge-cached), so
+    // the browser never talks to GitHub or trips CORS / rate limits.
+    if (url.pathname === "/content/bundle.md" && request.method === "GET") {
+      const upstream = "https://raw.githubusercontent.com/vladcioaba/cpp-dojo-datasets/main/bundle.md";
+      const res = await fetch(upstream, { cf: { cacheTtl: 300, cacheEverything: true } });
+      if (!res.ok) return new Response("content unavailable", { status: 502 });
+      return new Response(res.body, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/markdown; charset=utf-8",
+          "Cache-Control": "public, max-age=300",
+        },
+      });
+    }
+
     if (url.pathname === "/api/run" && request.method === "POST") {
       // Per-IP rate limit — the compile service runs untrusted code, so cap
       // how fast any one client can hammer it (DoS + billed-compute abuse).

@@ -3,7 +3,7 @@
   "private": true,
   "description": "Capacitor native shell (iOS / Android) around the cpp-dojo web app",
   "scripts": {
-    "prepare:www": "rm -rf www && cp -R ../public www",
+    "prepare:www": "rm -rf www && cp -R ../app.web www",
     "add:ios": "npm run prepare:www && npx cap add ios && npx cap sync ios",
     "add:android": "npm run prepare:www && npx cap add android && npx cap sync android",
     "sync": "npm run prepare:www && npx cap sync",

@@ -216,6 +216,28 @@ body::before {
   border-color: var(--ink);
   font-weight: 700;
 }
+.chip-review { display: inline-flex; align-items: center; gap: 6px; }
+.due-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--bg);
+  background: var(--amber);
+  border-radius: 999px;
+  min-width: 16px;
+  padding: 0 5px;
+  text-align: center;
+}
+.chip-review.active .due-badge { background: var(--bg); color: var(--amber); }
+
+.review-empty {
+  max-width: 520px;
+  margin: 16vh auto;
+  text-align: center;
+  font-family: var(--mono);
+  color: var(--muted);
+  line-height: 2;
+}
+.review-empty span { font-size: 12px; color: var(--faint); }
 
 /* ── feed ────────────────────────────────────────────────────── */
 

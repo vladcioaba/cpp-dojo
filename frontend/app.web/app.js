@@ -2,25 +2,14 @@
 
 const { esc, inline, codeBlock } = window.CPP;
 
-/* Content database lives openly on GitHub; the app fetches it from raw
-   first (so pushes show up without redeploy), local paths as fallback. */
-const CONTENT_SOURCES = [
-  "https://raw.githubusercontent.com/vladcioaba/cpp-dojo/main/",
-  "../",
-  "",
-];
-
-const FILES = [
-  ["fact", "content/facts.md"],
-  ["quiz", "content/quizzes.md"],
-  ["exercise", "content/exercises.md"],
-  ["snippet", "content/snippets.md"],
-  ["fact", "content/hft-facts.md"],
-  ["quiz", "content/hft-quizzes.md"],
-  ["challenge", "content/challenges.md"],
-  ["quiz", "content/quant-prob.md"],
-  ["fact", "content/fpga-facts.md"],
-  ["quiz", "content/fpga-quizzes.md"],
+/* Content lives in a separate repo (cpp-dojo-datasets) and is served as one
+   bundle by the backend, which proxies it from GitHub raw. Card types are
+   explicit in each card header, so one file + one default type is enough.
+   Fallbacks let the app still load if the backend proxy is unavailable. */
+const BUNDLE_SOURCES = [
+  "/content/bundle.md",                                                        // backend proxy (prod)
+  "https://raw.githubusercontent.com/vladcioaba/cpp-dojo-datasets/main/bundle.md", // direct raw
+  "../datasets/bundle.md",                                                     // local dev via submodule
 ];
 
 const API_RUN = "/api/run";
@@ -32,7 +21,7 @@ const state = load();
 
 function load() {
   try {
-    return Object.assign({ xp: 0, streak: 0, lastDay: "", done: {} },
+    return Object.assign({ xp: 0, streak: 0, lastDay: "", done: {}, srs: {} },
       JSON.parse(localStorage.getItem("cppdojo") || "{}"));
   } catch { return { xp: 0, streak: 0, lastDay: "", done: {} }; }
 }
@@ -137,8 +126,13 @@ const seenIO = new IntersectionObserver(
 const FILE_EXT = { fact: "md", quiz: "cpp", exercise: "cpp", snippet: "cpp", challenge: "cpp" };
 const FILE_STEM = { fact: "fact", quiz: "quiz", exercise: "drill", snippet: "snip", challenge: "chal" };
 
-function render(cards) {
+function render(cards, isReview) {
   feed.innerHTML = "";
+  if (isReview && !cards.length) {
+    feed.innerHTML = `<div class="review-empty">nothing due for review right now ✓<br>
+      <span>miss a quiz or challenge and it comes back here on a spaced schedule</span></div>`;
+    return;
+  }
   cards.forEach((card, idx) => {
     const el = document.createElement("article");
     el.className = "card";
@@ -391,11 +385,48 @@ function syncScore() {
   }, 1500);
 }
 
+/* ── spaced repetition (SM-2 lite) ───────────────────────────── */
+const DAY_MS = 86400000;
+const REVIEWABLE = new Set(["quiz", "exercise", "challenge"]);
+
+function srsReview(id, correct) {
+  if (!REVIEWABLE.has(id.split("-")[0])) return;
+  const s = state.srs[id] || { interval: 0, ease: 2.3, reps: 0, lapses: 0, due: 0 };
+  if (correct) {
+    s.reps += 1;
+    s.interval = s.reps === 1 ? 1 : s.reps === 2 ? 3 : Math.round(s.interval * s.ease);
+    s.ease = Math.min(2.8, s.ease + 0.1);
+  } else {
+    s.reps = 0;
+    s.lapses += 1;
+    s.interval = 0;            // resurface within the same session
+    s.ease = Math.max(1.3, s.ease - 0.2);
+  }
+  s.due = Date.now() + (s.interval === 0 ? 10 * 60 * 1000 : s.interval * DAY_MS);
+  state.srs[id] = s;
+  save();
+}
+
+function dueIds() {
+  const now = Date.now();
+  return new Set(Object.keys(state.srs).filter(id => state.srs[id].due <= now));
+}
+
+function updateDueBadge() {
+  const el = document.getElementById("dueCount");
+  if (!el) return;
+  const n = dueIds().size;
+  el.textContent = n ? String(n) : "";
+  el.hidden = !n;
+}
+
 function award(id, status, xp, anchorEl) {
   state.done[id] = status;
   state.xp += xp;
+  srsReview(id, status === "ok");
   save();
   syncScore();
+  updateDueBadge();
   document.getElementById("xp").textContent = state.xp;
   if (anchorEl && xp > 0) {
     const r = anchorEl.getBoundingClientRect();
@@ -450,18 +481,25 @@ let allCards = [];
 let filter = "all";
 // track cycles the whole feed through topic tracks
 const TRACKS = [
-  { id: "all", label: "⚡ tracks", title: "showing all cards — tap to focus a track" },
+  { id: "all", label: "◆ all tracks", title: "showing all cards — tap to focus a track" },
+  { id: "faang", label: "💼 FAANG", title: "LeetCode-style DS&A only" },
   { id: "hft", label: "⚡ HFT C++", title: "low-latency C++ only" },
   { id: "quant", label: "📊 quant", title: "probability & mental-math only" },
   { id: "fpga", label: "🔧 FPGA", title: "FPGA / hardware only" },
+  { id: "design", label: "🏛 design", title: "OOP, patterns & architecture only" },
 ];
 let track = localStorage.getItem("cppdojo-track") || "all";
 
 function applyFilters() {
   let cards = allCards;
   if (track !== "all") cards = cards.filter(c => c.track === track);
-  if (filter !== "all") cards = cards.filter(c => c.type === filter);
-  render(cards);
+  if (filter === "review") {
+    const due = dueIds();
+    cards = cards.filter(c => due.has(c.id));
+  } else if (filter !== "all") {
+    cards = cards.filter(c => c.type === filter);
+  }
+  render(cards, filter === "review");
   feed.scrollTop = 0;
 }
 
@@ -503,14 +541,14 @@ document.addEventListener("keydown", e => {
   cards[Math.max(0, Math.min(cards.length - 1, next))]?.scrollIntoView({ block: "start" });
 });
 
-async function fetchContent(path) {
-  for (const base of CONTENT_SOURCES) {
+async function fetchBundle() {
+  for (const url of BUNDLE_SOURCES) {
     try {
-      const r = await fetch(base + path);
+      const r = await fetch(url);
       if (r.ok) return await r.text();
     } catch { /* next source */ }
   }
-  throw new Error("all sources failed for " + path);
+  throw new Error("all bundle sources failed");
 }
 
 async function boot() {
@@ -522,17 +560,15 @@ async function boot() {
   syncScore(); // streak may have ticked — push it to the board
 
   try {
-    // one missing content file must not blank the whole feed
-    const texts = await Promise.all(
-      FILES.map(([type, path]) => fetchContent(path).then(t => [type, t]).catch(() => [type, ""]))
-    );
-    allCards = dailyMix(texts.flatMap(([type, t]) => parseCards(t, type)));
+    const text = await fetchBundle();
+    // every card header carries its explicit type, so one parse pass suffices
+    allCards = dailyMix(parseCards(text, "fact"));
     if (!allCards.length) throw new Error("no content loaded");
+    updateDueBadge();
     applyFilters();
   } catch (err) {
     feed.innerHTML = `<div class="error-card">failed to load content: ${esc(String(err))}<br><br>
-      content loads from GitHub raw or a local server — check network, or serve the repo root:<br>
-      <strong>python3 -m http.server 8000</strong> → http://localhost:8000/public/</div>`;
+      content is served by the backend from the datasets repo — check your network.</div>`;
   }
 }
 

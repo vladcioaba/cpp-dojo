@@ -1,16 +1,16 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "cpp-dojo",
-  "main": "src/worker.js",
+  "main": "backend/src/worker.js",
   "compatibility_date": "2026-06-01",
   "assets": {
-    "directory": "./public",
+    "directory": "./frontend/app.web",
     "binding": "ASSETS"
   },
   "containers": [
     {
       "class_name": "Compiler",
-      "image": "./container/Dockerfile",
+      "image": "./backend/container/Dockerfile",
       "instance_type": "basic",
       "max_instances": 3
     }
