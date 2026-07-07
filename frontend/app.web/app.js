@@ -524,9 +524,16 @@ const TRACKS = [
 ];
 let track = localStorage.getItem("cppdojo-track") || "all";
 
+/* deep-link from the skills page: ?tags=a,b filters the feed to a skill's
+   cards; ?card=Title opens one problem. Cleared by tapping a filter chip. */
+const _params = new URLSearchParams(location.search);
+let tagFilter = (_params.get("tags") || "").split(",").map(s => s.trim()).filter(Boolean);
+const cardFocus = _params.get("card");
+
 function applyFilters() {
   let cards = allCards;
   if (track !== "all") cards = cards.filter(c => c.track === track);
+  if (tagFilter.length) cards = cards.filter(c => c.tags.some(t => tagFilter.includes(t)));
   if (filter === "review") {
     const due = dueIds();
     cards = cards.filter(c => due.has(c.id));
@@ -534,7 +541,24 @@ function applyFilters() {
     cards = cards.filter(c => c.type === filter);
   }
   render(cards, filter === "review");
+  renderDeepLinkBanner();
   feed.scrollTop = 0;
+}
+
+function renderDeepLinkBanner() {
+  document.getElementById("dlBanner")?.remove();
+  if (!tagFilter.length) return;
+  const b = document.createElement("div");
+  b.id = "dlBanner";
+  b.className = "dl-banner";
+  b.innerHTML = `<span>practicing skill: <strong>${esc(tagFilter.join(", "))}</strong></span>
+    <button id="dlClear">show all ✕</button>`;
+  feed.prepend(b);
+  document.getElementById("dlClear").onclick = () => {
+    tagFilter = [];
+    history.replaceState(null, "", location.pathname);
+    applyFilters();
+  };
 }
 
 document.getElementById("chips").addEventListener("click", e => {
@@ -542,6 +566,7 @@ document.getElementById("chips").addEventListener("click", e => {
   if (!chip) return;
   document.querySelectorAll(".chip").forEach(c => c.classList.toggle("active", c === chip));
   filter = chip.dataset.filter;
+  tagFilter = []; // an explicit chip choice clears a skill deep-link
   applyFilters();
 });
 
@@ -600,6 +625,11 @@ async function boot() {
     if (!allCards.length) throw new Error("no content loaded");
     updateDueBadge();
     applyFilters();
+    if (cardFocus) {
+      const target = allCards.find(c => c.title === cardFocus);
+      const el = target && feed.querySelector(`.card[data-id="${target.id}"]`);
+      if (el) { el.scrollIntoView({ block: "start" }); el.classList.add("focused"); }
+    }
   } catch (err) {
     feed.innerHTML = `<div class="error-card">failed to load content: ${esc(String(err))}<br><br>
       content is served by the backend from the datasets repo — check your network.</div>`;

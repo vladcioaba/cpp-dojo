@@ -261,13 +261,15 @@ function selectNode(nodeId) {
   const probs = (node.problems || []).map(p => {
     const c = byTitle.get(p.title || p.name);
     const solved = c && done[c.id] === "ok";
-    return `<li class="${solved ? "solved" : ""}">
-      <span class="sk-prob-diff ${p.difficulty || ""}">${(p.difficulty || "?")[0].toUpperCase()}</span>
+    const link = p.playable && c ? `index.html?card=${encodeURIComponent(p.name)}` : null;
+    const inner = `<span class="sk-prob-diff ${p.difficulty || ""}">${(p.difficulty || "?")[0].toUpperCase()}</span>
       ${esc(p.name)}
       ${p.playable ? '<span class="sk-badge play">playable</span>' : '<span class="sk-badge ref">ref</span>'}
-      ${solved ? '<span class="sk-badge ok">✓</span>' : ""}
-    </li>`;
+      ${solved ? '<span class="sk-badge ok">✓</span>' : ""}`;
+    return `<li class="${solved ? "solved" : ""}">${
+      link ? `<a class="sk-prob-link" href="${link}">${inner}</a>` : inner}</li>`;
   }).join("");
+  const practiceTags = (node.cardTags || []).join(",");
   document.getElementById("detail").innerHTML = `
     <div class="sk-detail-head">
       <span class="sk-dot ${st}"></span>
@@ -285,7 +287,7 @@ function selectNode(nodeId) {
     }).join(", ")}</div>` : ""}
     <div class="sk-prob-title">problems teaching this</div>
     <ul class="sk-probs">${probs || "<li>—</li>"}</ul>
-    ${s.recs.length ? `<a class="btn btn-check sk-practice" href="index.html">practice in feed ▸</a>` : ""}`;
+    ${practiceTags ? `<a class="btn btn-check sk-practice" href="index.html?tags=${encodeURIComponent(practiceTags)}">practice this skill in feed ▸</a>` : ""}`;
 }
 
 /* ── boot ────────────────────────────────────────────────────── */

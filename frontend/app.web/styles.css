@@ -229,6 +229,36 @@ body::before {
 }
 .chip-review.active .due-badge { background: var(--bg); color: var(--amber); }
 
+.dl-banner {
+  max-width: 680px;
+  margin: 0 auto 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--lime) 8%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--lime) 35%, var(--border));
+  border-radius: 10px;
+  padding: 9px 14px;
+}
+.dl-banner strong { color: var(--lime); }
+.dl-banner button {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.dl-banner button:hover { color: var(--ink); border-color: var(--border-hi); }
+
+.card.focused { box-shadow: 0 0 0 2px var(--lime); }
+
 .review-empty {
   max-width: 520px;
   margin: 16vh auto;

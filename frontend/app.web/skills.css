@@ -124,3 +124,5 @@
 .sk-badge.ref { color: var(--faint); border: 1px solid var(--border); }
 .sk-badge.ok { color: var(--lime); }
 .sk-practice { display: inline-block; margin-top: 14px; text-decoration: none; }
+.sk-prob-link { display: flex; align-items: center; gap: 8px; text-decoration: none; color: inherit; }
+.sk-prob-link:hover { color: var(--lime); }
