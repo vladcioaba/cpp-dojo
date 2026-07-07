@@ -214,19 +214,25 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // Content proxy: the backend loads the learning bundle straight from the
+    // Content proxy: the backend loads learning content straight from the
     // datasets repo's GitHub raw and serves it same-origin (edge-cached), so
     // the browser never talks to GitHub or trips CORS / rate limits.
-    if (url.pathname === "/content/bundle.md" && request.method === "GET") {
-      const upstream = "https://raw.githubusercontent.com/vladcioaba/cpp-dojo-datasets/main/bundle.md";
+    // /content/<path> → datasets repo <path> (bundle.md, skills.json, …).
+    if (url.pathname.startsWith("/content/") && request.method === "GET") {
+      const rel = url.pathname.slice("/content/".length);
+      // only allow safe relative paths into the datasets repo
+      if (!/^[\w.\-\/]+$/.test(rel) || rel.includes("..")) {
+        return new Response("bad path", { status: 400 });
+      }
+      const upstream = "https://raw.githubusercontent.com/vladcioaba/cpp-dojo-datasets/main/" + rel;
       const res = await fetch(upstream, { cf: { cacheTtl: 300, cacheEverything: true } });
       if (!res.ok) return new Response("content unavailable", { status: 502 });
+      const type = rel.endsWith(".json") ? "application/json"
+        : rel.endsWith(".md") ? "text/markdown; charset=utf-8"
+        : "text/plain; charset=utf-8";
       return new Response(res.body, {
         status: 200,
-        headers: {
-          "Content-Type": "text/markdown; charset=utf-8",
-          "Cache-Control": "public, max-age=300",
-        },
+        headers: { "Content-Type": type, "Cache-Control": "public, max-age=300" },
       });
     }
 

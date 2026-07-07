@@ -323,10 +323,20 @@ function renderExercise(card, body, isChallenge) {
         }
         return;
       }
-      // backend unreachable → fall through to string match
+      // backend unreachable → fall through to offline similarity check
     }
-    if (norm(ta.value) === norm(solution.code)) pass();
-    else {
+    const sim = similarity(ta.value, solution.code);
+    const pctStr = Math.round(sim * 100) + "% match";
+    out.hidden = false;
+    if (sim >= 0.82) {
+      out.textContent = `⚠ offline — no compiler. Text similarity ${pctStr} vs the reference (looks right).`;
+      pass();
+    } else if (sim >= 0.55) {
+      out.textContent = `⚠ offline — no compiler. Text similarity ${pctStr} — close, compare with the solution.`;
+      verdict.textContent = `≈ ${pctStr} (offline)`;
+      verdict.className = "verdict";
+    } else {
+      out.textContent = `⚠ offline — no compiler. Text similarity ${pctStr} — doesn't match yet.`;
       verdict.textContent = "✗ doesn't match yet";
       verdict.className = "verdict no";
     }
@@ -353,6 +363,29 @@ function norm(code) {
     .replace(/\/\/[^\n]*/g, "")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\s+/g, "");
+}
+
+/* Offline check — when the compile backend is unreachable (e.g. on mobile
+   with no connection), compare the user's code to the reference solution by
+   text similarity instead of requiring an exact match. Dice coefficient over
+   character bigrams of the normalized code: order-tolerant, cheap, forgiving
+   of a differently-but-correctly written solution. */
+function bigrams(s) {
+  const m = new Map();
+  for (let i = 0; i < s.length - 1; i++) {
+    const g = s.slice(i, i + 2);
+    m.set(g, (m.get(g) || 0) + 1);
+  }
+  return m;
+}
+function similarity(a, b) {
+  const na = norm(a), nb = norm(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 1;
+  const ba = bigrams(na), bb = bigrams(nb);
+  let inter = 0;
+  for (const [g, ca] of ba) inter += Math.min(ca, bb.get(g) || 0);
+  return (2 * inter) / (na.length - 1 + nb.length - 1);
 }
 
 function markDone(id) {
@@ -402,7 +435,8 @@ function srsReview(id, correct) {
     s.interval = 0;            // resurface within the same session
     s.ease = Math.max(1.3, s.ease - 0.2);
   }
-  s.due = Date.now() + (s.interval === 0 ? 10 * 60 * 1000 : s.interval * DAY_MS);
+  s.last = Date.now();              // powers the "last practiced" ticker
+  s.due = s.last + (s.interval === 0 ? 10 * 60 * 1000 : s.interval * DAY_MS);
   state.srs[id] = s;
   save();
 }

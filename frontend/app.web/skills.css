@@ -1,0 +1,126 @@
+/* ── cpp-dojo · skills ───────────────────────────────────────── */
+
+.skills-wrap {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 16px max(16px, env(safe-area-inset-right)) 40px max(16px, env(safe-area-inset-left));
+  z-index: 1;
+}
+
+/* ── header: readiness ring + polish queue ───────────────────── */
+.sk-head {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  gap: 16px;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto 16px;
+}
+@media (max-width: 720px) { .sk-head { grid-template-columns: 1fr; } }
+
+.sk-readiness, .sk-polish {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px;
+}
+.sk-readiness { display: flex; align-items: center; gap: 18px; }
+.sk-ring {
+  width: 84px; height: 84px; flex: 0 0 auto; border-radius: 50%;
+  display: grid; place-items: center;
+  background: conic-gradient(var(--lime) calc(var(--pct) * 1%), var(--panel-2) 0);
+  font-family: var(--mono);
+}
+.sk-ring span {
+  width: 64px; height: 64px; border-radius: 50%; background: var(--panel);
+  display: grid; place-items: center; font-weight: 800; font-size: 18px; color: var(--lime);
+}
+.sk-readiness-title { font-family: var(--disp); font-weight: 700; font-size: 18px; }
+.sk-readiness-sub { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+.sk-polish-title { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--amber); margin-bottom: 10px; }
+.sk-polish-list { display: flex; flex-wrap: wrap; gap: 7px; }
+.sk-polish-item {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--mono); font-size: 12px; color: var(--ink);
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px;
+  padding: 6px 12px; cursor: pointer; transition: border-color .15s;
+}
+.sk-polish-item:hover { border-color: var(--border-hi); }
+.sk-polish-meta { color: var(--faint); font-size: 11px; }
+
+.sk-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.sk-dot.mastered { background: var(--lime); }
+.sk-dot.learning { background: var(--amber); }
+.sk-dot.available { background: var(--blue); }
+.sk-dot.locked { background: var(--faint); }
+
+/* ── domain tabs ─────────────────────────────────────────────── */
+.sk-tabs { display: flex; gap: 8px; flex-wrap: wrap; max-width: 1100px; width: 100%; margin: 0 auto 12px; }
+.sk-tab {
+  font-family: var(--mono); font-size: 13px; color: var(--muted);
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px;
+  padding: 7px 15px; cursor: pointer; transition: all .15s;
+}
+.sk-tab:hover { color: var(--ink); border-color: var(--border-hi); }
+.sk-tab.active { color: var(--bg); background: var(--ink); border-color: var(--ink); font-weight: 700; }
+
+/* ── tree + detail ───────────────────────────────────────────── */
+.sk-tree-wrap {
+  display: grid; grid-template-columns: 1fr minmax(280px, 360px); gap: 16px;
+  max-width: 1100px; width: 100%; margin: 0 auto; min-height: 0; flex: 1;
+}
+@media (max-width: 860px) { .sk-tree-wrap { grid-template-columns: 1fr; } }
+
+.sk-tree {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  overflow: auto; min-height: 360px; padding: 8px;
+}
+.sk-tree svg { display: block; }
+
+.sk-edge { fill: none; stroke: var(--border-hi); stroke-width: 1.5; opacity: .6; }
+
+.sk-node { cursor: pointer; }
+.sk-node rect { fill: var(--panel-2); stroke: var(--border-hi); stroke-width: 1.5; transition: stroke .15s; }
+.sk-node .sk-node-fill { stroke: none; opacity: .16; pointer-events: none; }
+.sk-node-name { fill: var(--ink); font-family: var(--mono); font-weight: 700; font-size: 12.5px; }
+.sk-node-meta { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+.sk-node.mastered rect { stroke: var(--lime); }
+.sk-node.mastered .sk-node-fill { fill: var(--lime); }
+.sk-node.learning rect { stroke: var(--amber); }
+.sk-node.learning .sk-node-fill { fill: var(--amber); }
+.sk-node.available rect { stroke: var(--blue); stroke-dasharray: 0; }
+.sk-node.locked rect { stroke: var(--border); stroke-dasharray: 4 4; }
+.sk-node.locked .sk-node-name, .sk-node.locked .sk-node-meta { fill: var(--faint); }
+.sk-node.sel rect { stroke-width: 3; }
+.sk-node:hover rect { stroke-width: 2.5; }
+
+.sk-detail {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  padding: 18px; overflow-y: auto; min-height: 0;
+}
+.sk-detail-empty { font-family: var(--mono); font-size: 13px; color: var(--faint); line-height: 1.7; }
+.sk-detail-head { display: flex; align-items: center; gap: 10px; }
+.sk-detail-head h2 { font-family: var(--disp); font-size: 20px; font-weight: 700; }
+.sk-blurb { font-size: 14px; color: var(--muted); line-height: 1.55; margin: 10px 0 14px; }
+.sk-bar { height: 8px; background: var(--panel-2); border-radius: 999px; overflow: hidden; }
+.sk-bar > div { height: 100%; background: var(--lime); border-radius: 999px; }
+.sk-stats { display: flex; gap: 12px; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 10px 0; }
+.sk-stats strong { color: var(--amber); }
+.sk-status-mastered { color: var(--lime); } .sk-status-learning { color: var(--amber); }
+.sk-status-available { color: var(--blue); } .sk-status-locked { color: var(--faint); }
+.sk-prereqs { font-family: var(--mono); font-size: 11.5px; color: var(--faint); margin-bottom: 12px; }
+
+.sk-prob-title { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin: 8px 0 8px; }
+.sk-probs { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.sk-probs li { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+.sk-probs li.solved { color: var(--muted); }
+.sk-prob-diff { width: 18px; height: 18px; border-radius: 4px; display: grid; place-items: center; font-size: 10px; font-weight: 700; flex: 0 0 auto; background: var(--panel-2); color: var(--muted); }
+.sk-prob-diff.easy { color: var(--lime); } .sk-prob-diff.medium { color: var(--amber); } .sk-prob-diff.hard { color: var(--red); }
+.sk-badge { font-size: 9.5px; font-weight: 700; border-radius: 4px; padding: 1px 5px; }
+.sk-badge.play { color: var(--bg); background: var(--lime); }
+.sk-badge.ref { color: var(--faint); border: 1px solid var(--border); }
+.sk-badge.ok { color: var(--lime); }
+.sk-practice { display: inline-block; margin-top: 14px; text-decoration: none; }
