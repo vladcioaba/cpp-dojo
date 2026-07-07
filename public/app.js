@@ -15,10 +15,13 @@ const FILES = [
   ["quiz", "content/quizzes.md"],
   ["exercise", "content/exercises.md"],
   ["snippet", "content/snippets.md"],
+  ["fact", "content/hft-facts.md"],
+  ["quiz", "content/hft-quizzes.md"],
+  ["challenge", "content/challenges.md"],
 ];
 
 const API_RUN = "/api/run";
-const XP = { quizRight: 10, quizWrong: 2, exercise: 20 };
+const XP = { quizRight: 10, quizWrong: 2, exercise: 20, challenge: 50 };
 
 /* ── state ───────────────────────────────────────────────────── */
 
@@ -65,13 +68,14 @@ function parseCards(text, defaultType) {
     const title = m ? m[2] : head;
 
     const meta = {};
-    body = body.replace(/^(tags|source|difficulty):\s*(.+)$/gm, (_, k, v) => {
+    body = body.replace(/^(tags|source|difficulty|track):\s*(.+)$/gm, (_, k, v) => {
       meta[k] = v.trim(); return "";
     });
 
     cards.push({
       id: type + "-" + hash(head + body),
       type, title,
+      track: meta.track || "core",
       tags: (meta.tags || "").split(",").map(t => t.trim()).filter(Boolean),
       blocks: parseBlocks(body),
     });
@@ -127,8 +131,8 @@ const seenIO = new IntersectionObserver(
   { threshold: 0.15 }
 );
 
-const FILE_EXT = { fact: "md", quiz: "cpp", exercise: "cpp", snippet: "cpp" };
-const FILE_STEM = { fact: "fact", quiz: "quiz", exercise: "drill", snippet: "snip" };
+const FILE_EXT = { fact: "md", quiz: "cpp", exercise: "cpp", snippet: "cpp", challenge: "cpp" };
+const FILE_STEM = { fact: "fact", quiz: "quiz", exercise: "drill", snippet: "snip", challenge: "chal" };
 
 function render(cards) {
   feed.innerHTML = "";
@@ -153,6 +157,7 @@ function render(cards) {
     const body = el.querySelector(".card-body");
     if (card.type === "quiz") renderQuiz(card, body);
     else if (card.type === "exercise") renderExercise(card, body);
+    else if (card.type === "challenge") renderExercise(card, body, true);
     else if (card.type === "snippet") renderSnippet(card, body);
     else renderFact(card, body);
 
@@ -219,11 +224,12 @@ function renderQuiz(card, body) {
 
 /* Exercise: local string-match is the offline fallback; when the compile
    backend is reachable, the harness verdict (g++ + runtime PASS) wins. */
-function renderExercise(card, body) {
+function renderExercise(card, body, isChallenge) {
   const codes = card.blocks.filter(b => b.kind === "code");
   const starter = codes.find(b => b.starter);
   const harness = codes.find(b => b.harness);
   const solution = codes.filter(b => !b.starter && !b.harness).pop();
+  const xpReward = isChallenge ? XP.challenge : XP.exercise;
 
   for (const b of card.blocks) {
     if (b.kind === "p") body.insertAdjacentHTML("beforeend", `<p>${inline(b.text)}</p>`);
@@ -234,6 +240,23 @@ function renderExercise(card, body) {
   ta.className = "editor";
   ta.placeholder = "// type your C++ here";
   ta.spellcheck = false;
+
+  // Challenge timer: counts up from the first keystroke, freezes on pass.
+  let timerEl = null, t0 = 0, tick = null;
+  const bestKey = "t:" + card.id;
+  if (isChallenge) {
+    timerEl = document.createElement("span");
+    timerEl.className = "chal-timer";
+    const best = state.done[bestKey];
+    timerEl.textContent = best ? `best ${best}s` : "0.0s";
+    ta.addEventListener("input", () => {
+      if (t0 || state.done[card.id] === "ok") return;
+      t0 = performance.now();
+      tick = setInterval(() => {
+        timerEl.textContent = ((performance.now() - t0) / 1000).toFixed(1) + "s";
+      }, 100);
+    }, { once: false });
+  }
 
   const actions = document.createElement("div");
   actions.className = "ex-actions";
@@ -246,6 +269,7 @@ function renderExercise(card, body) {
   const verdict = document.createElement("span");
   verdict.className = "verdict";
   actions.append(check, reveal, verdict);
+  if (timerEl) actions.append(timerEl);
 
   const out = document.createElement("pre");
   out.className = "compile-out";
@@ -265,7 +289,15 @@ function renderExercise(card, body) {
   const pass = () => {
     verdict.textContent = "✓ 0 errors, 0 warnings";
     verdict.className = "verdict ok";
-    if (state.done[card.id] !== "ok") award(card.id, "ok", XP.exercise, check);
+    const first = state.done[card.id] !== "ok";
+    if (first) award(card.id, "ok", xpReward, check);
+    if (timerEl && t0) {
+      clearInterval(tick);
+      const secs = +((performance.now() - t0) / 1000).toFixed(1);
+      const prev = state.done[bestKey];
+      if (prev == null || secs < prev) { state.done[bestKey] = secs; save(); }
+      timerEl.textContent = `solved ${secs}s · best ${state.done[bestKey]}s`;
+    }
     markDone(card.id);
   };
 
@@ -413,15 +445,40 @@ function dailyMix(cards) {
 
 let allCards = [];
 let filter = "all";
+let track = localStorage.getItem("cppdojo-track") || "all"; // "all" | "hft"
+
+function applyFilters() {
+  let cards = allCards;
+  if (track !== "all") cards = cards.filter(c => c.track === track);
+  if (filter !== "all") cards = cards.filter(c => c.type === filter);
+  render(cards);
+  feed.scrollTop = 0;
+}
 
 document.getElementById("chips").addEventListener("click", e => {
   const chip = e.target.closest(".chip");
   if (!chip) return;
   document.querySelectorAll(".chip").forEach(c => c.classList.toggle("active", c === chip));
   filter = chip.dataset.filter;
-  render(filter === "all" ? allCards : allCards.filter(c => c.type === filter));
-  feed.scrollTop = 0;
+  applyFilters();
 });
+
+/* HFT mode: restricts the whole feed to track=hft cards. */
+const modeBtn = document.getElementById("modeToggle");
+if (modeBtn) {
+  const paint = () => {
+    modeBtn.classList.toggle("on", track === "hft");
+    modeBtn.textContent = track === "hft" ? "⚡ HFT" : "⚡ HFT prep";
+    modeBtn.title = track === "hft" ? "HFT mode on — showing low-latency cards only" : "switch to HFT prep mode";
+  };
+  modeBtn.onclick = () => {
+    track = track === "hft" ? "all" : "hft";
+    localStorage.setItem("cppdojo-track", track);
+    paint();
+    applyFilters();
+  };
+  paint();
+}
 
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") return;
@@ -453,11 +510,13 @@ async function boot() {
   syncScore(); // streak may have ticked — push it to the board
 
   try {
+    // one missing content file must not blank the whole feed
     const texts = await Promise.all(
-      FILES.map(([type, path]) => fetchContent(path).then(t => [type, t]))
+      FILES.map(([type, path]) => fetchContent(path).then(t => [type, t]).catch(() => [type, ""]))
     );
     allCards = dailyMix(texts.flatMap(([type, t]) => parseCards(t, type)));
-    render(allCards);
+    if (!allCards.length) throw new Error("no content loaded");
+    applyFilters();
   } catch (err) {
     feed.innerHTML = `<div class="error-card">failed to load content: ${esc(String(err))}<br><br>
       content loads from GitHub raw or a local server — check network, or serve the repo root:<br>
