@@ -3,14 +3,14 @@
    - content .md    : network-first, cache fallback (works offline, updates live)
    - everything else: cache-first shell (instant loads, installable) */
 
-const VERSION = "v3";
+const VERSION = "v4";
 const SHELL = "shell-" + VERSION;
 const RUNTIME = "runtime-" + VERSION;
 
 const SHELL_ASSETS = [
-  "/", "/index.html", "/skills.html", "/labs.html", "/ranks.html", "/sprint.html",
-  "/styles.css", "/skills.css", "/labs.css", "/sprint.css",
-  "/app.js", "/skills.js", "/highlight.js", "/theme.js", "/ranks.js", "/sprint.js", "/pwa.js",
+  "/", "/index.html", "/today.html", "/skills.html", "/labs.html", "/ranks.html", "/sprint.html",
+  "/styles.css", "/today.css", "/skills.css", "/labs.css", "/sprint.css",
+  "/app.js", "/today.js", "/skills.js", "/highlight.js", "/theme.js", "/ranks.js", "/sprint.js", "/pwa.js",
   "/labs-core.js",
   "/labs/treeview.js", "/labs/vector.js", "/labs/heap.js", "/labs/segtree.js",
   "/labs/bst.js", "/labs/rbtree.js", "/labs/graph.js", "/labs/orderbook.js",
