@@ -41,8 +41,10 @@ function parseBundle(text) {
     const type = m[1], title = m[2].trim();
     const meta = {};
     body = body.replace(/^(tags|source|difficulty|track):\s*(.+)$/gm, (_, k, v) => { meta[k] = v.trim(); return ""; });
+    body = body.replace(/^hint:\s*(.+)$/gm, "").replace(/\n?\*\*Editorial:\*\*\s*([\s\S]*)$/m, "");
+    const idBody = body.replace(/\n{3,}/g, "\n\n");   // must match app.js id recipe
     cards.push({
-      id: type + "-" + hash(head + body),
+      id: type + "-" + hash(head + idBody),
       type, title,
       tags: (meta.tags || "").split(",").map(t => t.trim()).filter(Boolean),
     });

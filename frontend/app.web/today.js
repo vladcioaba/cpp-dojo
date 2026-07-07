@@ -23,7 +23,9 @@ function parseBundle(text) {
     const nl = sec.indexOf("\n"); const head = sec.slice(0, nl).trim(); let body = sec.slice(nl + 1);
     const m = head.match(/^(\w+):\s*(.*)$/); if (!m) continue;
     const meta = {}; body = body.replace(/^(tags|source|difficulty|track):\s*(.+)$/gm, (_, k, v) => { meta[k] = v.trim(); return ""; });
-    cards.push({ id: m[1] + "-" + hash(head + body), type: m[1], title: m[2].trim(),
+    body = body.replace(/^hint:\s*(.+)$/gm, "").replace(/\n?\*\*Editorial:\*\*\s*([\s\S]*)$/m, "");
+    const idBody = body.replace(/\n{3,}/g, "\n\n");   // must match app.js id recipe
+    cards.push({ id: m[1] + "-" + hash(head + idBody), type: m[1], title: m[2].trim(),
       tags: (meta.tags || "").split(",").map(t => t.trim()).filter(Boolean) });
   }
   return cards;

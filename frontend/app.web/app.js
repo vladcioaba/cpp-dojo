@@ -63,12 +63,22 @@ function parseCards(text, defaultType) {
     body = body.replace(/^(tags|source|difficulty|track):\s*(.+)$/gm, (_, k, v) => {
       meta[k] = v.trim(); return "";
     });
+    // progressive hints + editorial (stripped before the id hash so adding
+    // them to an existing card doesn't change its id / lose saved progress)
+    const hints = [];
+    body = body.replace(/^hint:\s*(.+)$/gm, (_, h) => { hints.push(h.trim()); return ""; });
+    let editorial = "";
+    body = body.replace(/\n?\*\*Editorial:\*\*\s*([\s\S]*)$/m, (_, e) => { editorial = e.trim(); return ""; });
 
+    // collapse blank-line runs for the id hash so inserting hints/editorial
+    // (which leave blank lines once stripped) doesn't shift a card's id
+    const idBody = body.replace(/\n{3,}/g, "\n\n");
     cards.push({
-      id: type + "-" + hash(head + body),
+      id: type + "-" + hash(head + idBody),
       type, title,
       track: meta.track || "core",
       tags: (meta.tags || "").split(",").map(t => t.trim()).filter(Boolean),
+      hints, editorial,
       blocks: parseBlocks(body),
     });
   }
@@ -260,12 +270,36 @@ function renderExercise(card, body, isChallenge) {
   const check = document.createElement("button");
   check.className = "btn btn-check";
   check.textContent = "compile ▸";
+
+  // progressive hints — reveal one at a time before falling back to the solution
+  let hintBox = null, hintBtn = null, shownHints = 0;
+  if (card.hints && card.hints.length) {
+    hintBtn = document.createElement("button");
+    hintBtn.className = "btn btn-hint";
+    hintBtn.textContent = `hint (${card.hints.length})`;
+    hintBox = document.createElement("div");
+    hintBox.className = "hints";
+    hintBox.hidden = true;
+    hintBtn.onclick = () => {
+      if (shownHints >= card.hints.length) return;
+      hintBox.hidden = false;
+      hintBox.insertAdjacentHTML("beforeend",
+        `<div class="hint"><span class="hint-n">${shownHints + 1}</span>${inline(card.hints[shownHints])}</div>`);
+      shownHints++;
+      hintBtn.textContent = shownHints < card.hints.length
+        ? `next hint (${shownHints}/${card.hints.length})` : "solution below ↓";
+      if (shownHints >= card.hints.length) hintBtn.disabled = true;
+    };
+  }
+
   const reveal = document.createElement("button");
   reveal.className = "btn";
   reveal.textContent = "show solution";
   const verdict = document.createElement("span");
   verdict.className = "verdict";
-  actions.append(check, reveal, verdict);
+  actions.append(check);
+  if (hintBtn) actions.append(hintBtn);
+  actions.append(reveal, verdict);
   if (timerEl) actions.append(timerEl);
 
   const out = document.createElement("pre");
@@ -276,7 +310,8 @@ function renderExercise(card, body, isChallenge) {
   solWrap.className = "solution";
   solWrap.hidden = true;
   if (solution)
-    solWrap.innerHTML = `<div class="solution-label">solution</div>` + codeBlock(solution.code);
+    solWrap.innerHTML = `<div class="solution-label">solution</div>` + codeBlock(solution.code)
+      + (card.editorial ? `<div class="editorial"><span class="editorial-label">editorial</span>${inline(card.editorial)}</div>` : "");
 
   if (state.done[card.id] === "ok") {
     verdict.textContent = "✓ passed";
@@ -343,7 +378,9 @@ function renderExercise(card, body, isChallenge) {
   };
   reveal.onclick = () => { solWrap.hidden = !solWrap.hidden; };
 
-  body.append(ta, actions, out, solWrap);
+  body.append(ta, actions);
+  if (hintBox) body.append(hintBox);
+  body.append(out, solWrap);
 }
 
 async function compileRun(code) {
