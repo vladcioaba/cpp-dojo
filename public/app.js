@@ -18,6 +18,9 @@ const FILES = [
   ["fact", "content/hft-facts.md"],
   ["quiz", "content/hft-quizzes.md"],
   ["challenge", "content/challenges.md"],
+  ["quiz", "content/quant-prob.md"],
+  ["fact", "content/fpga-facts.md"],
+  ["quiz", "content/fpga-quizzes.md"],
 ];
 
 const API_RUN = "/api/run";
@@ -445,7 +448,14 @@ function dailyMix(cards) {
 
 let allCards = [];
 let filter = "all";
-let track = localStorage.getItem("cppdojo-track") || "all"; // "all" | "hft"
+// track cycles the whole feed through topic tracks
+const TRACKS = [
+  { id: "all", label: "⚡ tracks", title: "showing all cards — tap to focus a track" },
+  { id: "hft", label: "⚡ HFT C++", title: "low-latency C++ only" },
+  { id: "quant", label: "📊 quant", title: "probability & mental-math only" },
+  { id: "fpga", label: "🔧 FPGA", title: "FPGA / hardware only" },
+];
+let track = localStorage.getItem("cppdojo-track") || "all";
 
 function applyFilters() {
   let cards = allCards;
@@ -463,16 +473,18 @@ document.getElementById("chips").addEventListener("click", e => {
   applyFilters();
 });
 
-/* HFT mode: restricts the whole feed to track=hft cards. */
+/* Track mode: cycles the whole feed through topic tracks (all → hft → quant → fpga). */
 const modeBtn = document.getElementById("modeToggle");
 if (modeBtn) {
   const paint = () => {
-    modeBtn.classList.toggle("on", track === "hft");
-    modeBtn.textContent = track === "hft" ? "⚡ HFT" : "⚡ HFT prep";
-    modeBtn.title = track === "hft" ? "HFT mode on — showing low-latency cards only" : "switch to HFT prep mode";
+    const t = TRACKS.find(x => x.id === track) || TRACKS[0];
+    modeBtn.classList.toggle("on", track !== "all");
+    modeBtn.textContent = t.label;
+    modeBtn.title = t.title;
   };
   modeBtn.onclick = () => {
-    track = track === "hft" ? "all" : "hft";
+    const idx = TRACKS.findIndex(x => x.id === track);
+    track = TRACKS[(idx + 1) % TRACKS.length].id;
     localStorage.setItem("cppdojo-track", track);
     paint();
     applyFilters();

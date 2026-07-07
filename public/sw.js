@@ -3,17 +3,17 @@
    - content .md    : network-first, cache fallback (works offline, updates live)
    - everything else: cache-first shell (instant loads, installable) */
 
-const VERSION = "v1";
+const VERSION = "v2";
 const SHELL = "shell-" + VERSION;
 const RUNTIME = "runtime-" + VERSION;
 
 const SHELL_ASSETS = [
-  "/", "/index.html", "/labs.html", "/ranks.html",
-  "/styles.css", "/labs.css",
-  "/app.js", "/highlight.js", "/theme.js", "/ranks.js",
+  "/", "/index.html", "/labs.html", "/ranks.html", "/sprint.html",
+  "/styles.css", "/labs.css", "/sprint.css",
+  "/app.js", "/highlight.js", "/theme.js", "/ranks.js", "/sprint.js", "/pwa.js",
   "/labs-core.js",
   "/labs/treeview.js", "/labs/vector.js", "/labs/heap.js", "/labs/segtree.js",
-  "/labs/bst.js", "/labs/rbtree.js", "/labs/graph.js",
+  "/labs/bst.js", "/labs/rbtree.js", "/labs/graph.js", "/labs/orderbook.js",
   "/manifest.webmanifest",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png",
 ];
