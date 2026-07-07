@@ -59,7 +59,17 @@ One card per `##` section:
 | `facts.md` | fact | `## fact: Title`, prose + ```cpp blocks |
 | `quizzes.md` | quiz | `## quiz: Question`, code, `- [ ]`/`- [x]` options, `> explanation` |
 | `exercises.md` | drill | prompt, `// starter` block, solution block, `// harness` block (hidden; `//__USER__` marker, prints `PASS`) |
+| `challenges.md` | challenge | timed drill: prompt, `// starter`, solution, `// harness`; tagged `track: hft` |
 | `snippets.md` | snippet | `## snippet: date — source — title`, code, `**Analysis:**` |
+
+Cards may carry `track: hft` (default `core`). The **⚡ HFT prep** header toggle restricts the whole feed to `track: hft` cards.
+
+## HFT interview prep
+
+Toggle **⚡ HFT prep** to focus the feed on low-latency C++ — 56 interview-grade cards for firms like Optiver, IMC, Jump, HRT, Citadel Securities:
+
+- **26 facts + 22 quizzes** — cache lines / false sharing, the C++ memory model (`memory_order`), lock-free / CAS / ABA, branch prediction, RVO + guaranteed copy elision, `noexcept` moves, UB + strict aliasing, `rdtsc` + tail percentiles, huge pages / TLB, NUMA, `volatile` ≠ `atomic`.
+- **8 challenges** — timed, compile-checked: SPSC ring buffer, fixed object pool, branchless min, round-up-to-power-of-two, `bit_cast` float punning, O(1) swap-remove, `popcount`, cache-line-padded counter. The clock starts on your first keystroke; best time is saved.
 
 Keys: `j`/`k` jump between feed cards. Feed order reshuffles deterministically each day.
 
