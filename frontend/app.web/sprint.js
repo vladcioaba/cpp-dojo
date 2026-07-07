@@ -4,16 +4,30 @@
 const { esc, inline, codeBlock } = window.CPP;
 const root = document.getElementById("sprintRoot");
 
-const CONTENT_SOURCES = [
-  "https://raw.githubusercontent.com/vladcioaba/cpp-dojo/main/",
-  "../", "",
+/* content comes from the one bundle the backend serves (datasets repo) */
+const BUNDLE_SOURCES = [
+  "/content/bundle.md",
+  "https://raw.githubusercontent.com/vladcioaba/cpp-dojo-datasets/main/bundle.md",
+  "../datasets/bundle.md",
 ];
-const QUIZ_FILES = {
-  hft: ["content/hft-quizzes.md"],
-  quant: ["content/quant-prob.md"],
-  fpga: ["content/fpga-quizzes.md"],
-  core: ["content/quizzes.md"],
+// which card tracks feed each sprint track ("mock" = mixed gauntlet)
+const TRACK_MATCH = {
+  hft: c => c.track === "hft",
+  quant: c => c.track === "quant",
+  fpga: c => c.track === "fpga",
+  design: c => c.track === "design",
+  core: c => !c.track || c.track === "core",
+  mock: () => true,
 };
+let _bundle = null;
+async function loadQuizzes() {
+  if (_bundle) return _bundle;
+  for (const url of BUNDLE_SOURCES) {
+    try { const r = await fetch(url); if (r.ok) { _bundle = parseQuizzes(await r.text()); return _bundle; } }
+    catch { /* next */ }
+  }
+  return (_bundle = []);
+}
 
 /* ── best-score store ────────────────────────────────────────── */
 function bests() {
@@ -48,11 +62,13 @@ function setup() {
       </div>
 
       <div class="sp-group">
-        <div class="sp-group-head">📝 quiz round</div>
+        <div class="sp-group-head">📝 quiz round ${bestLine("quiz:mock")}</div>
         <div class="sp-opts" id="trackOpts">
-          <button class="sp-opt active" data-track="hft">HFT C++</button>
+          <button class="sp-opt active" data-track="mock">🎯 mock (mixed)</button>
+          <button class="sp-opt" data-track="hft">HFT C++</button>
           <button class="sp-opt" data-track="quant">quant</button>
           <button class="sp-opt" data-track="fpga">FPGA</button>
+          <button class="sp-opt" data-track="design">design</button>
           <button class="sp-opt" data-track="core">core C++</button>
         </div>
         <div class="sp-row">
@@ -174,19 +190,12 @@ function arithResults(diff, n, correct, t) {
 }
 
 /* ── quiz sprint ─────────────────────────────────────────────── */
-async function fetchOne(path) {
-  for (const base of CONTENT_SOURCES) {
-    try { const r = await fetch(base + path); if (r.ok) return await r.text(); }
-    catch { /* next */ }
-  }
-  return "";
-}
-
 function parseQuizzes(text) {
   const out = [];
   for (const sec of text.split(/^## quiz:/m).slice(1)) {
     const nl = sec.indexOf("\n");
     const title = sec.slice(0, nl).trim();
+    const track = (sec.match(/^track:\s*(\S+)/m) || [])[1] || "core";
     let body = sec.slice(nl + 1).replace(/^(tags|track|source):.*$/gm, "");
     const opts = [];
     const optRe = /^- \[([ x])\] (.+)$/gm;
@@ -195,7 +204,7 @@ function parseQuizzes(text) {
     const qm = body.match(/^> (.+)$/m);
     const code = body.match(/```cpp\n([\s\S]*?)```/) || body.match(/```verilog\n([\s\S]*?)```/);
     if (opts.length >= 2 && opts.some(o => o.right))
-      out.push({ title, opts, explain: qm ? qm[1] : "", code: code ? code[1] : null });
+      out.push({ title, track, opts, explain: qm ? qm[1] : "", code: code ? code[1] : null });
   }
   return out;
 }
@@ -210,8 +219,9 @@ function shuffle(a) {
 
 async function runQuiz(track, n) {
   root.innerHTML = `<section class="sp-card"><p class="sp-sub">loading ${esc(track)} questions<span class="dots"></span></p></section>`;
-  const texts = await Promise.all((QUIZ_FILES[track] || []).map(fetchOne));
-  let pool = texts.flatMap(parseQuizzes);
+  const all = await loadQuizzes();
+  const match = TRACK_MATCH[track] || (() => true);
+  let pool = all.filter(match);
   if (!pool.length) {
     root.innerHTML = `<section class="sp-card"><p class="sp-sub">no questions found for ${esc(track)} — content may still be deploying.</p>
       <button class="btn" id="home">menu</button></section>`;
