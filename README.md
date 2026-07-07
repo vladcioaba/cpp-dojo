@@ -2,7 +2,7 @@
 
 Daily C++ grind, shaped like a social feed. Open it every morning, scroll cards one at a time: **facts**, **quizzes**, **write-the-code drills** with a *real compiler* behind the check button, **snippets** captured from LinkedIn & co. with LLM analysis — plus **animated visualization labs** for the classic data structures. Streak + XP tracked locally. Day/night theme.
 
-**Live:** https://cpp-dojo.vlad-cioaba.workers.dev — feed at `/`, labs at `/labs`, leaderboard at `/ranks`
+**Live:** https://cpp-dojo.vlad-cioaba.workers.dev — feed `/`, labs `/labs`, sprint `/sprint`, leaderboard `/ranks`
 
 ## Architecture
 
@@ -24,6 +24,7 @@ Animated, step-by-step, each with the C++ implementation alongside — the execu
 | bst | insert/find walking the compare path; "worst case" button shows sorted input degenerating to a list |
 | rb tree | insert fixup live: red uncle → recolor; black uncle → rotation — nodes glide into balance. Sorted 1..15 stays log-height |
 | graph | BFS ring vs DFS dive vs A* beeline on a wall-drawing grid |
+| order book | price-time-priority limit book + matching engine; submit crossing orders, watch partial/full fills against the best opposite level |
 
 ## Run locally
 
@@ -64,9 +65,21 @@ One card per `##` section:
 
 Cards may carry `track: hft` (default `core`). The **⚡ HFT prep** header toggle restricts the whole feed to `track: hft` cards.
 
-## HFT interview prep
+## Sprint (`/sprint`) — timed drills
 
-Toggle **⚡ HFT prep** to focus the feed on low-latency C++ — 56 interview-grade cards for firms like Optiver, IMC, Jump, HRT, Citadel Securities:
+Beat the clock, mock-interview style:
+- **Arithmetic sprint** — generated mental-math (Optiver-style), easy/medium/hard, numeric input, best time saved.
+- **Quiz round** — N random cards from a chosen track (HFT C++ / quant / FPGA / core), timed, scored, with explanations.
+
+## Prep tracks
+
+The feed's track toggle cycles **all → ⚡ HFT C++ → 📊 quant → 🔧 FPGA**; sprint and the toggle draw from the same tagged content.
+
+- **HFT low-latency C++** — 56 cards (26 facts, 22 quizzes, 8 timed challenges): cache lines / false sharing, `memory_order`, lock-free / CAS / ABA, branch prediction, RVO, `noexcept`, UB + aliasing, `rdtsc` + tail percentiles, huge pages / TLB, NUMA.
+- **Quant** — 26 probability / EV / combinatorics / market-making brainteasers (Optiver, Jane Street, IMC): coupon collector, gambler's ruin, Bayes, order statistics, fair odds.
+- **FPGA for HFT** — 42 cards (24 facts, 18 quizzes): LUTs/FFs/BRAM/DSP, Verilog (blocking vs non-blocking), timing closure / Fmax, pipelining, CDC + metastability, HLS, tick-to-trade in nanoseconds.
+
+Toggle **⚡ HFT prep** to focus the feed on low-latency C++ — interview-grade cards for firms like Optiver, IMC, Jump, HRT, Citadel Securities:
 
 - **26 facts + 22 quizzes** — cache lines / false sharing, the C++ memory model (`memory_order`), lock-free / CAS / ABA, branch prediction, RVO + guaranteed copy elision, `noexcept` moves, UB + strict aliasing, `rdtsc` + tail percentiles, huge pages / TLB, NUMA, `volatile` ≠ `atomic`.
 - **8 challenges** — timed, compile-checked: SPSC ring buffer, fixed object pool, branchless min, round-up-to-power-of-two, `bit_cast` float punning, O(1) swap-remove, `popcount`, cache-line-padded counter. The clock starts on your first keystroke; best time is saved.
