@@ -1,7 +1,7 @@
 {
   "appId": "dev.cppdojo.app",
   "appName": "cpp-dojo",
-  "webDir": "www",
+  "webDir": "app.web",
   "server": {
     "url": "https://cpp-dojo.vlad-cioaba.workers.dev",
     "cleartext": false

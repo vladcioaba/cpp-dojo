@@ -1,0 +1,15 @@
+node_modules/
+
+# iOS generated / build artifacts (CocoaPods + Xcode)
+app.ios/App/Pods/
+app.ios/App/Podfile.lock
+app.ios/App/build/
+app.ios/DerivedData/
+
+# Android generated / build artifacts
+app.android/.gradle/
+app.android/build/
+app.android/app/build/
+app.android/local.properties
+app.android/.idea/
+app.android/capacitor-cordova-android-plugins/

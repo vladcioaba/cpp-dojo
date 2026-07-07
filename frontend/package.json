@@ -1,0 +1,20 @@
+{
+  "name": "cpp-dojo-frontend",
+  "private": true,
+  "description": "cpp-dojo frontends — app.web (web), app.ios / app.android (Capacitor native shells)",
+  "scripts": {
+    "add:ios": "npx cap add ios",
+    "add:android": "npx cap add android",
+    "sync": "npx cap sync",
+    "open:ios": "npx cap open ios",
+    "open:android": "npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6",
+    "@capacitor/ios": "^6",
+    "@capacitor/android": "^6"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6"
+  }
+}
