@@ -7,9 +7,10 @@ const { esc } = window.CPP;
 const root = document.getElementById("skillsRoot");
 
 const SRC = base => [
-  "/content/" + base,
-  "https://raw.githubusercontent.com/vladcioaba/cpp-dojo-datasets/main/" + base,
-  "../datasets/" + base,
+  "https://cpp-dojo.vlad-cioaba.workers.dev/content/" + base, // fresh (online, native too)
+  "/content/" + base,          // same-origin on web
+  "/offline/" + base,          // bundled snapshot → works offline
+  "../datasets/" + base,       // local dev
 ];
 
 function loadState() {

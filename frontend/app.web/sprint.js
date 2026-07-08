@@ -6,8 +6,9 @@ const root = document.getElementById("sprintRoot");
 
 /* content comes from the one bundle the backend serves (datasets repo) */
 const BUNDLE_SOURCES = [
+  "https://cpp-dojo.vlad-cioaba.workers.dev/content/bundle.md",
   "/content/bundle.md",
-  "https://raw.githubusercontent.com/vladcioaba/cpp-dojo-datasets/main/bundle.md",
+  "/offline/bundle.md",
   "../datasets/bundle.md",
 ];
 // which card tracks feed each sprint track ("mock" = mixed gauntlet)

@@ -6,8 +6,9 @@ const { esc } = window.CPP;
 const root = document.getElementById("todayRoot");
 
 const SRC = base => [
+  "https://cpp-dojo.vlad-cioaba.workers.dev/content/" + base,
   "/content/" + base,
-  "https://raw.githubusercontent.com/vladcioaba/cpp-dojo-datasets/main/" + base,
+  "/offline/" + base,
   "../datasets/" + base,
 ];
 async function fetchFirst(bases) {

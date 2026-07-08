@@ -56,9 +56,10 @@ def run_preexec():
     os.setsid()                     # own process group; we still reap by uid
 
 
-# Cap uid RUNNER to 64 processes, then exec the program. `ulimit -u` runs
-# after the shell is already RUNNER, so the program's execve has no uid change.
-RUN_WRAPPER = 'ulimit -u 64 2>/dev/null; exec "$0"'
+# Cap uid RUNNER to 64 processes, then exec the command. `ulimit -u` runs
+# after the shell is already RUNNER, so the exec has no uid change. `exec "$@"`
+# handles both a bare binary (./prog) and interpreter+script (python3 main.py).
+RUN_WRAPPER = 'ulimit -u 64 2>/dev/null; exec "$@"'
 
 
 def reap(uid):
@@ -83,17 +84,45 @@ def clip(s):
     return s[:MAX_OUT]
 
 
-def compile_and_run(code):
+def _run(argv, tmp, env):
+    """Run argv as the unprivileged RUNNER (sandboxed, reaped, output-capped)."""
+    p = subprocess.Popen(
+        ["/bin/sh", "-c", RUN_WRAPPER, "run"] + argv, stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        cwd=tmp, env=env, preexec_fn=run_preexec)
+    try:
+        out, errtext = p.communicate(timeout=RUN_TIMEOUT)
+        return {"stdout": clip(out), "stderr": clip(errtext), "exit": p.returncode}
+    except subprocess.TimeoutExpired:
+        reap(RUNNER)
+        try:
+            out, errtext = p.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            out, errtext = "", ""
+        return {"stdout": clip(out or ""), "stderr": "timed out after %ss" % RUN_TIMEOUT, "exit": -1}
+    finally:
+        reap(RUNNER)
+
+
+def compile_and_run(code, lang="cpp"):
     with tempfile.TemporaryDirectory() as tmp:
-        # hand the workdir to RUNNER so the unprivileged compiler can write here
-        os.chown(tmp, RUNNER, RUNNER)
-        src = Path(tmp) / "main.cpp"
-        src.write_text(code)
-        os.chown(src, RUNNER, RUNNER)
-        prog = Path(tmp) / "prog"
+        os.chown(tmp, RUNNER, RUNNER)  # unprivileged workload writes here
         env = {"PATH": "/usr/bin:/bin", "HOME": tmp, "TMPDIR": tmp}
 
         with RUN_LOCK:
+            if lang == "python":
+                # interpreted — no compile step; run python3 directly
+                src = Path(tmp) / "main.py"
+                src.write_text(code)
+                os.chown(src, RUNNER, RUNNER)
+                run = _run(["python3", str(src)], tmp, env)
+                return {"compile": {"ok": True, "stderr": ""}, "run": run}
+
+            # C++ — compile with g++, then run the binary
+            src = Path(tmp) / "main.cpp"
+            src.write_text(code)
+            os.chown(src, RUNNER, RUNNER)
+            prog = Path(tmp) / "prog"
             try:
                 cc = subprocess.run(
                     ["g++", "-std=c++20", "-O0", "-fdiagnostics-color=never",
@@ -111,26 +140,7 @@ def compile_and_run(code):
                 return {"compile": {"ok": False, "stderr": clip(cc.stderr)},
                         "run": {"stdout": "", "stderr": "", "exit": -1}}
 
-            p = subprocess.Popen(
-                ["/bin/sh", "-c", RUN_WRAPPER, str(prog)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                cwd=tmp, env=env, preexec_fn=run_preexec)
-            try:
-                out, errtext = p.communicate(timeout=RUN_TIMEOUT)
-                run = {"stdout": clip(out), "stderr": clip(errtext),
-                       "exit": p.returncode}
-            except subprocess.TimeoutExpired:
-                reap(RUNNER)
-                try:
-                    out, errtext = p.communicate(timeout=2)
-                except subprocess.TimeoutExpired:
-                    out, errtext = "", ""
-                run = {"stdout": clip(out or ""),
-                       "stderr": "timed out after %ss" % RUN_TIMEOUT, "exit": -1}
-            finally:
-                reap(RUNNER)
-
+            run = _run([str(prog)], tmp, env)
             return {"compile": {"ok": True, "stderr": clip(cc.stderr)}, "run": run}
 
 
@@ -159,12 +169,14 @@ class Handler(BaseHTTPRequestHandler):
         if n > MAX_BODY:
             return self._json(413, {"error": "body too large"})
         try:
-            code = json.loads(self.rfile.read(n)).get("code", "")
+            body = json.loads(self.rfile.read(n))
+            code = body.get("code", "")
+            lang = "python" if body.get("lang") == "python" else "cpp"
         except (json.JSONDecodeError, AttributeError):
             return self._json(400, {"error": "bad json"})
         if not code.strip():
             return self._json(400, {"error": "empty code"})
-        self._json(200, compile_and_run(code))
+        self._json(200, compile_and_run(code, lang))
 
 
 if __name__ == "__main__":

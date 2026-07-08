@@ -3,6 +3,8 @@
    The password is sent once over HTTPS to /api/register|login and never stored
    client-side — only the returned session token is kept. */
 
+// absolute so the native app (loaded from a local bundle) reaches the backend
+const API = "https://cpp-dojo.vlad-cioaba.workers.dev";
 const AUTH_KEY = "cppdojo-auth";
 const LEGACY_KEY = "cppdojo-profile"; // old anonymous {name, token}
 
@@ -35,7 +37,7 @@ async function submitScore() {
   if (a) body = { session: a.session, xp: st.xp || 0, streak: st.streak || 0 };
   else if (leg) body = { token: leg.token, name: leg.name, xp: st.xp || 0, streak: st.streak || 0 };
   else return;
-  await fetch("/api/score", {
+  await fetch(API + "/api/score", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   }).catch(() => {});
@@ -67,7 +69,7 @@ el("lbForm").addEventListener("submit", async e => {
   msg.textContent = mode === "register" ? "creating…" : "checking…";
   el("fSubmit").disabled = true;
 
-  const endpoint = mode === "register" ? "/api/register" : "/api/login";
+  const endpoint = mode === "register" ? API + "/api/register" : API + "/api/login";
   const payload = mode === "register" ? { nick, email, password } : { email, password };
   let res;
   try {
@@ -92,7 +94,7 @@ el("lbForm").addEventListener("submit", async e => {
 
 el("btnLogout").onclick = async () => {
   const a = auth();
-  if (a) await fetch("/api/logout", {
+  if (a) await fetch(API + "/api/logout", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token: a.session }),
   }).catch(() => {});
@@ -112,7 +114,7 @@ async function render() {
 
   const q = a ? `?session=${a.session}` : (legacy() ? `?token=${legacy().token}` : "");
   let data;
-  try { data = await (await fetch("/api/leaderboard" + q)).json(); }
+  try { data = await (await fetch(API + "/api/leaderboard" + q)).json(); }
   catch {
     el("lbEmpty").hidden = false;
     el("lbEmpty").textContent = "leaderboard unreachable — offline?";
@@ -156,7 +158,7 @@ setMode("login");
   if (a) {
     // validate session; refresh profile or drop it if expired
     try {
-      const r = await fetch("/api/me?token=" + a.session);
+      const r = await fetch(API + "/api/me?token=" + a.session);
       if (r.ok) { a.profile = (await r.json()).profile; setAuth(a); }
       else if (r.status === 401) setAuth(null);
     } catch { /* offline — keep cached */ }

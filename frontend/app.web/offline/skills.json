@@ -1,0 +1,3992 @@
+{
+ "trees": [
+  {
+   "id": "cpp",
+   "name": "Modern C++ Mastery",
+   "icon": "⚙️",
+   "nodes": [
+    {
+     "id": "value-semantics",
+     "name": "Value Semantics & Object Model",
+     "blurb": "Objects are values with identity, lifetime, and copies you can reason about.",
+     "tier": 1,
+     "prereqs": [],
+     "cardTags": [
+      "core",
+      "value-semantics"
+     ],
+     "problems": [
+      {
+       "name": "Implement a value-semantic Vec2",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Deep-copy a dynamic array class",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Return a big object by value",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Detect an accidental copy",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "references-const",
+     "name": "References & Const-Correctness",
+     "blurb": "Bind without copying and let const document (and enforce) intent.",
+     "tier": 2,
+     "prereqs": [
+      "value-semantics"
+     ],
+     "cardTags": [
+      "core"
+     ],
+     "problems": [
+      {
+       "name": "Const-correct getter/setter pair",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Builder with method chaining",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "const overload of operator[]",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Pass by const-ref vs value benchmark",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "type-system",
+     "name": "The Type System: auto & decltype",
+     "blurb": "Let the compiler name your types and preserve their exact category.",
+     "tier": 2,
+     "prereqs": [
+      "value-semantics"
+     ],
+     "cardTags": [
+      "core"
+     ],
+     "problems": [
+      {
+       "name": "Trailing return type",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "auto vs decltype return type",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "decltype(auto) perfect return",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Structured bindings for a struct",
+       "difficulty": "easy",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "raii",
+     "name": "RAII: Resource Acquisition Is Initialization",
+     "blurb": "Tie every resource to an object's lifetime so cleanup is automatic.",
+     "tier": 3,
+     "prereqs": [
+      "references-const"
+     ],
+     "cardTags": [
+      "raii",
+      "core",
+      "singleton"
+     ],
+     "problems": [
+      {
+       "name": "RAII file guard",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Scoped timer (RAII)",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Meyers Singleton",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Fixed-capacity object pool",
+       "difficulty": "hard",
+       "playable": true
+      },
+      {
+       "name": "RAII mutex lock guard",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "lambdas",
+     "name": "Lambdas & Closures",
+     "blurb": "Inline function objects that capture state and drive callbacks.",
+     "tier": 3,
+     "prereqs": [
+      "references-const"
+     ],
+     "cardTags": [
+      "lambdas"
+     ],
+     "problems": [
+      {
+       "name": "Strategy via lambda",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Observer — subscribe and notify",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Capture by value vs reference",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Generic (templated) lambda",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Recursive lambda with the Y-combinator",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "stl-containers",
+     "name": "STL Containers & Their Tradeoffs",
+     "blurb": "Pick the right container by knowing its memory layout and complexity.",
+     "tier": 3,
+     "prereqs": [
+      "value-semantics"
+     ],
+     "cardTags": [
+      "containers",
+      "vector"
+     ],
+     "problems": [
+      {
+       "name": "O(1) swap-remove",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Reserve to avoid reallocations",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "vector vs list traversal benchmark",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Pick the right container (map vs unordered_map)",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "overload-resolution",
+     "name": "Overload Resolution & ADL",
+     "blurb": "How the compiler chooses one function among many, and where it looks.",
+     "tier": 3,
+     "prereqs": [
+      "type-system"
+     ],
+     "cardTags": [
+      "core"
+     ],
+     "problems": [
+      {
+       "name": "Break an ambiguous overload",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "ADL-found swap",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Hidden friend operator<<",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Tag dispatch on iterator category",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "rule-of-five",
+     "name": "The Rule of 0 / 3 / 5",
+     "blurb": "Own a resource and you owe five special members — or better, zero.",
+     "tier": 4,
+     "prereqs": [
+      "raii",
+      "value-semantics"
+     ],
+     "cardTags": [
+      "value-semantics",
+      "core"
+     ],
+     "problems": [
+      {
+       "name": "Make a class non-copyable",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Rule of zero refactor",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Copy-and-swap assignment",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Rule of five for an owning buffer",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "exception-safety",
+     "name": "Exception Safety & Guarantees",
+     "blurb": "Write code that stays correct even when an operation throws mid-flight.",
+     "tier": 4,
+     "prereqs": [
+      "raii"
+     ],
+     "cardTags": [
+      "exceptions",
+      "raii"
+     ],
+     "problems": [
+      {
+       "name": "RAII to avoid leaks on throw",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Copy-and-swap for exception safety",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Strong exception guarantee for push_back",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "iterators",
+     "name": "Iterators & Ranges of Data",
+     "blurb": "The uniform cursor abstraction that connects containers to algorithms.",
+     "tier": 4,
+     "prereqs": [
+      "stl-containers"
+     ],
+     "cardTags": [
+      "containers"
+     ],
+     "problems": [
+      {
+       "name": "Range-based for over a custom type",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Reverse iterator adapter",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Write a forward iterator",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "templates",
+     "name": "Templates & Argument Deduction",
+     "blurb": "Write once, generate for many types, and let deduction fill in the blanks.",
+     "tier": 4,
+     "prereqs": [
+      "type-system",
+      "overload-resolution"
+     ],
+     "cardTags": [
+      "templates"
+     ],
+     "problems": [
+      {
+       "name": "Generic max",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Deduce template arguments",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Class template with a default argument",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Explicit specialization",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "move-semantics",
+     "name": "Move Semantics & Rvalue References",
+     "blurb": "Steal resources from expiring objects instead of copying them.",
+     "tier": 5,
+     "prereqs": [
+      "rule-of-five"
+     ],
+     "cardTags": [
+      "move",
+      "value-semantics"
+     ],
+     "problems": [
+      {
+       "name": "Move constructor",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Move assignment with self-check",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "std::move a member out of a class",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Sink argument by value",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "algorithms-ranges",
+     "name": "Algorithms & Ranges",
+     "blurb": "Replace raw loops with composable, correct standard algorithms.",
+     "tier": 5,
+     "prereqs": [
+      "iterators",
+      "lambdas"
+     ],
+     "cardTags": [
+      "ranges"
+     ],
+     "problems": [
+      {
+       "name": "Rewrite a raw loop with std algorithms",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "erase-remove idiom",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Filter | transform pipeline (ranges)",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Custom projection with ranges",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "constexpr",
+     "name": "constexpr & Compile-Time Computation",
+     "blurb": "Push work from run time to compile time for free results and constants.",
+     "tier": 5,
+     "prereqs": [
+      "templates"
+     ],
+     "cardTags": [
+      "constexpr"
+     ],
+     "problems": [
+      {
+       "name": "constexpr factorial",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "if constexpr branch",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "constexpr string hash",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "consteval compile-time check",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "undefined-behavior",
+     "name": "Undefined Behavior & Strict Aliasing",
+     "blurb": "Know the sharp edges the compiler assumes you will never touch.",
+     "tier": 5,
+     "prereqs": [
+      "value-semantics",
+      "references-const"
+     ],
+     "cardTags": [
+      "undefined-behavior",
+      "aliasing"
+     ],
+     "problems": [
+      {
+       "name": "Type-pun a float without UB",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Fix a strict-aliasing violation",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Signed overflow trap",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Dangling reference hunt",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "smart-pointers",
+     "name": "Ownership & Smart Pointers",
+     "blurb": "Model unique, shared, and non-owning ownership with the right pointer.",
+     "tier": 6,
+     "prereqs": [
+      "raii",
+      "move-semantics"
+     ],
+     "cardTags": [
+      "smart-pointers",
+      "raii"
+     ],
+     "problems": [
+      {
+       "name": "Factory function",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "unique_ptr with a custom deleter",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Break a shared_ptr cycle with weak_ptr",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Implement a tiny unique_ptr",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "copy-elision-rvo",
+     "name": "Copy Elision & RVO",
+     "blurb": "When the compiler builds the result in place and skips the copy entirely.",
+     "tier": 6,
+     "prereqs": [
+      "move-semantics"
+     ],
+     "cardTags": [
+      "move"
+     ],
+     "problems": [
+      {
+       "name": "Guaranteed copy elision (C++17)",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Trigger NRVO and observe no copy",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Defeat RVO on purpose",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "noexcept",
+     "name": "noexcept & the Move-or-Copy Choice",
+     "blurb": "Promise not to throw, and unlock faster library fast paths.",
+     "tier": 6,
+     "prereqs": [
+      "exception-safety",
+      "move-semantics"
+     ],
+     "cardTags": [
+      "exceptions"
+     ],
+     "problems": [
+      {
+       "name": "Mark a move constructor noexcept",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "noexcept move enables vector growth",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Conditional noexcept(noexcept(...))",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "variadic-templates",
+     "name": "Variadic Templates & Fold Expressions",
+     "blurb": "Take any number of arguments of any types and forward them perfectly.",
+     "tier": 6,
+     "prereqs": [
+      "templates"
+     ],
+     "cardTags": [
+      "templates"
+     ],
+     "problems": [
+      {
+       "name": "Fold expression print",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Variadic sum",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Perfect-forwarding make_unique",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Tuple-like storage",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "sfinae-concepts",
+     "name": "SFINAE → Concepts",
+     "blurb": "Constrain templates cleanly with C++20 concepts instead of enable_if tricks.",
+     "tier": 6,
+     "prereqs": [
+      "templates"
+     ],
+     "cardTags": [
+      "concepts",
+      "templates"
+     ],
+     "problems": [
+      {
+       "name": "requires-clause constraint",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Write a Container concept",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "enable_if a function overload",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Detection idiom (has member)",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "crtp",
+     "name": "CRTP & Static Polymorphism",
+     "blurb": "Reuse behavior through the derived type with zero virtual overhead.",
+     "tier": 6,
+     "prereqs": [
+      "templates"
+     ],
+     "cardTags": [
+      "crtp",
+      "inheritance"
+     ],
+     "problems": [
+      {
+       "name": "CRTP base",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "CRTP static counter",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "CRTP mixin (equality)",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "variant-optional-expected",
+     "name": "variant / optional / expected",
+     "blurb": "Model 'one of', 'maybe', and 'value or error' as first-class value types.",
+     "tier": 6,
+     "prereqs": [
+      "templates"
+     ],
+     "cardTags": [
+      "variant"
+     ],
+     "problems": [
+      {
+       "name": "Visitor with std::variant",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "optional as a maybe-return",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "expected error handling",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Overload set for std::visit",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "hot-path-bit-tricks",
+     "name": "Hot-Path Code & Bit Tricks",
+     "blurb": "Branchless, inlinable, cache-friendly code where every cycle counts.",
+     "tier": 6,
+     "prereqs": [
+      "undefined-behavior"
+     ],
+     "cardTags": [
+      "hot-path",
+      "inlining"
+     ],
+     "problems": [
+      {
+       "name": "Branchless min",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Round up to power of two",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "popcount without the builtin",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Force-inline a hot helper",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "memory-model-atomics",
+     "name": "Memory Model & std::atomic",
+     "blurb": "Reason about visibility and ordering across threads with atomics.",
+     "tier": 6,
+     "prereqs": [
+      "undefined-behavior"
+     ],
+     "cardTags": [
+      "atomics",
+      "memory-order"
+     ],
+     "problems": [
+      {
+       "name": "Cache-line aligned counter (kill false sharing)",
+       "difficulty": "hard",
+       "playable": true
+      },
+      {
+       "name": "Atomic counter with relaxed order",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Acquire/release flag handoff",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Double-checked locking done right",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "type-erasure",
+     "name": "Type Erasure",
+     "blurb": "Hide concrete types behind a uniform interface, like std::function does.",
+     "tier": 7,
+     "prereqs": [
+      "templates",
+      "smart-pointers"
+     ],
+     "cardTags": [
+      "templates",
+      "virtual"
+     ],
+     "problems": [
+      {
+       "name": "Tiny std::function",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "any_drawable with type erasure",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Small-buffer-optimized callable",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "concurrency-threads",
+     "name": "Concurrency: Threads, Mutex, CV",
+     "blurb": "Coordinate threads safely with mutexes and condition variables.",
+     "tier": 7,
+     "prereqs": [
+      "memory-model-atomics"
+     ],
+     "cardTags": [
+      "concurrency"
+     ],
+     "problems": [
+      {
+       "name": "std::async fan-out/fan-in",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Deadlock and fix with std::scoped_lock",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Producer/consumer with condition_variable",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Thread pool",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "coroutines",
+     "name": "Coroutines (C++20)",
+     "blurb": "Suspend and resume functions to write lazy generators and async tasks.",
+     "tier": 7,
+     "prereqs": [
+      "move-semantics",
+      "templates"
+     ],
+     "cardTags": [
+      "core",
+      "coroutines"
+     ],
+     "problems": [
+      {
+       "name": "Minimal generator coroutine",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Lazy task<T>",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "co_await a timer",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "lock-free",
+     "name": "Lock-Free Data Structures",
+     "blurb": "Build wait-free and lock-free queues with atomics and careful ordering.",
+     "tier": 8,
+     "prereqs": [
+      "memory-model-atomics",
+      "concurrency-threads"
+     ],
+     "cardTags": [
+      "lock-free",
+      "atomics",
+      "concurrency"
+     ],
+     "problems": [
+      {
+       "name": "SPSC ring buffer",
+       "difficulty": "hard",
+       "playable": true
+      },
+      {
+       "name": "Compare-exchange loop",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Treiber stack (lock-free)",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "ABA problem demo",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "design",
+   "name": "OOP, Patterns & Architecture",
+   "icon": "🏛",
+   "nodes": [
+    {
+     "id": "encapsulation-invariants",
+     "name": "Encapsulation & Invariants",
+     "blurb": "Hide state behind an interface so every object always satisfies its class invariant.",
+     "tier": 1,
+     "prereqs": [],
+     "cardTags": [
+      "design"
+     ],
+     "problems": [
+      {
+       "name": "Class invariant with private state",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Enforce invariant in constructor",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Getter/setter with validation",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "value-semantics",
+     "name": "Value vs Reference Semantics",
+     "blurb": "Decide whether a type copies like an int or is shared by reference, and design its lifetime accordingly.",
+     "tier": 1,
+     "prereqs": [],
+     "cardTags": [
+      "value-semantics"
+     ],
+     "problems": [
+      {
+       "name": "Make a class non-copyable",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Rule of five wrapper",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Copy vs move semantics demo",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "composition-over-inheritance",
+     "name": "Composition over Inheritance",
+     "blurb": "Prefer assembling behavior from members (has-a) instead of deep class hierarchies (is-a).",
+     "tier": 2,
+     "prereqs": [
+      "encapsulation-invariants"
+     ],
+     "cardTags": [
+      "composition",
+      "inheritance"
+     ],
+     "problems": [
+      {
+       "name": "Refactor inheritance to composition",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Has-a vs is-a modeling",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Delegate behavior to a member",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "raii-design",
+     "name": "RAII as a Design Tool",
+     "blurb": "Tie resource ownership to object lifetime so cleanup is automatic and exception-safe.",
+     "tier": 2,
+     "prereqs": [
+      "value-semantics",
+      "encapsulation-invariants"
+     ],
+     "cardTags": [
+      "raii",
+      "smart-pointers"
+     ],
+     "problems": [
+      {
+       "name": "RAII file guard",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Scoped timer (RAII)",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Mutex lock guard",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "value-objects-entities",
+     "name": "Value Objects vs Entities",
+     "blurb": "Model things by value when equality is by content, and by identity when they have a lifecycle.",
+     "tier": 2,
+     "prereqs": [
+      "value-semantics",
+      "encapsulation-invariants"
+     ],
+     "cardTags": [
+      "value-semantics",
+      "design"
+     ],
+     "problems": [
+      {
+       "name": "Immutable value object with equality",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Entity with identity",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Money value type",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "solid-srp-ocp",
+     "name": "SOLID: SRP & OCP",
+     "blurb": "One reason to change per class, and open for extension but closed for modification.",
+     "tier": 3,
+     "prereqs": [
+      "composition-over-inheritance",
+      "encapsulation-invariants"
+     ],
+     "cardTags": [
+      "solid"
+     ],
+     "problems": [
+      {
+       "name": "Split a god class by responsibility",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Open for extension via interface",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Add a new type without editing old code",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "coupling-cohesion",
+     "name": "Coupling, Cohesion & Demeter",
+     "blurb": "Maximize cohesion within a module, minimize coupling between them, and don't talk to strangers.",
+     "tier": 3,
+     "prereqs": [
+      "composition-over-inheritance"
+     ],
+     "cardTags": [
+      "architecture",
+      "design"
+     ],
+     "problems": [
+      {
+       "name": "Apply the Law of Demeter",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Reduce coupling with an interface",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Tell, don't ask refactor",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "solid-lsp-isp-dip",
+     "name": "SOLID: LSP, ISP & DIP",
+     "blurb": "Subtypes must be substitutable, interfaces small and client-specific, and dependencies point at abstractions.",
+     "tier": 4,
+     "prereqs": [
+      "solid-srp-ocp"
+     ],
+     "cardTags": [
+      "solid",
+      "dependency-injection"
+     ],
+     "problems": [
+      {
+       "name": "Fix an LSP violation",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Split a fat interface",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Depend on abstractions",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "dependency-injection",
+     "name": "Dependency Injection",
+     "blurb": "Pass collaborators in from outside instead of constructing them internally, so wiring lives at the edges.",
+     "tier": 4,
+     "prereqs": [
+      "solid-lsp-isp-dip"
+     ],
+     "cardTags": [
+      "dependency-injection"
+     ],
+     "problems": [
+      {
+       "name": "Constructor injection",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Inject a policy via template",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Wire dependencies at composition root",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "singleton",
+     "name": "Singleton",
+     "blurb": "Guarantee a single shared instance with controlled access, while knowing why it's often a smell.",
+     "tier": 4,
+     "prereqs": [
+      "raii-design",
+      "dependency-injection"
+     ],
+     "cardTags": [
+      "singleton",
+      "patterns"
+     ],
+     "problems": [
+      {
+       "name": "Meyers Singleton",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Thread-safe lazy singleton",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Monostate alternative",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "factory-builder",
+     "name": "Factory, Abstract Factory, Builder & Prototype",
+     "blurb": "Encapsulate object construction: factories choose the type, builders assemble step by step, prototypes clone.",
+     "tier": 5,
+     "prereqs": [
+      "solid-lsp-isp-dip",
+      "dependency-injection"
+     ],
+     "cardTags": [
+      "factory",
+      "patterns"
+     ],
+     "problems": [
+      {
+       "name": "Factory function",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Builder with method chaining",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Abstract factory family",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Prototype clone",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "adapter-facade",
+     "name": "Adapter & Facade",
+     "blurb": "Wrap an incompatible interface to fit a client, or hide a subsystem behind one simple entry point.",
+     "tier": 5,
+     "prereqs": [
+      "solid-lsp-isp-dip"
+     ],
+     "cardTags": [
+      "adapter",
+      "structural"
+     ],
+     "problems": [
+      {
+       "name": "Adapter to a legacy interface",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Facade over a subsystem",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Object adapter via composition",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "decorator-proxy",
+     "name": "Decorator, Proxy & Flyweight",
+     "blurb": "Wrap an object to add behavior, control access to it, or share immutable state across many instances.",
+     "tier": 5,
+     "prereqs": [
+      "composition-over-inheritance",
+      "solid-srp-ocp"
+     ],
+     "cardTags": [
+      "decorator",
+      "structural"
+     ],
+     "problems": [
+      {
+       "name": "Implement a Decorator chain",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Logging proxy",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Flyweight glyph cache",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "composite",
+     "name": "Composite",
+     "blurb": "Treat individual objects and compositions of objects uniformly through a shared tree interface.",
+     "tier": 5,
+     "prereqs": [
+      "composition-over-inheritance"
+     ],
+     "cardTags": [
+      "composition",
+      "structural"
+     ],
+     "problems": [
+      {
+       "name": "Composite tree of shapes",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Sum sizes over a composite",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "strategy",
+     "name": "Strategy & Template Method",
+     "blurb": "Vary an algorithm by injecting a pluggable strategy, or by overriding steps of a fixed skeleton.",
+     "tier": 5,
+     "prereqs": [
+      "dependency-injection",
+      "solid-srp-ocp"
+     ],
+     "cardTags": [
+      "strategy",
+      "behavioral"
+     ],
+     "problems": [
+      {
+       "name": "Strategy via lambda",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Pluggable sort strategy",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Template Method hook",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "observer",
+     "name": "Observer",
+     "blurb": "Let subjects notify a changing set of subscribers without knowing who they are.",
+     "tier": 5,
+     "prereqs": [
+      "solid-lsp-isp-dip"
+     ],
+     "cardTags": [
+      "observer",
+      "behavioral"
+     ],
+     "problems": [
+      {
+       "name": "Observer — subscribe and notify",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Signal/slot with std::function",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Auto-unsubscribe on scope exit",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "command-state",
+     "name": "Command, State & Chain of Responsibility",
+     "blurb": "Reify a request as an object to queue, undo, hand along a chain, or drive an explicit state machine.",
+     "tier": 6,
+     "prereqs": [
+      "strategy"
+     ],
+     "cardTags": [
+      "behavioral",
+      "patterns"
+     ],
+     "problems": [
+      {
+       "name": "Command with undo",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "State machine for a turnstile",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Chain of Responsibility handler",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "visitor-iterator",
+     "name": "Visitor & Iterator",
+     "blurb": "Add operations over a fixed object structure without touching it, and traverse containers uniformly.",
+     "tier": 6,
+     "prereqs": [
+      "composite"
+     ],
+     "cardTags": [
+      "variant",
+      "behavioral"
+     ],
+     "problems": [
+      {
+       "name": "Visitor with std::variant",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Classic double-dispatch visitor",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Custom forward iterator",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "crtp",
+     "name": "CRTP & Static Polymorphism",
+     "blurb": "Use the curiously recurring template pattern for compile-time polymorphism and reusable mixins.",
+     "tier": 6,
+     "prereqs": [
+      "solid-lsp-isp-dip"
+     ],
+     "cardTags": [
+      "crtp",
+      "virtual"
+     ],
+     "problems": [
+      {
+       "name": "CRTP base",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Static polymorphism with CRTP",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Mixin via CRTP",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "type-erasure-variant",
+     "name": "Type Erasure & Sum Types",
+     "blurb": "Choose runtime polymorphism via type-erased wrappers versus closed sets modeled with std::variant.",
+     "tier": 6,
+     "prereqs": [
+      "value-semantics",
+      "strategy"
+     ],
+     "cardTags": [
+      "type-erasure",
+      "variant"
+     ],
+     "problems": [
+      {
+       "name": "Type-erased Any",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "std::function-style callable wrapper",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Closed set polymorphism with std::variant",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "pimpl-abi",
+     "name": "PIMPL, Firewalls & ABI",
+     "blurb": "Hide implementation behind a pointer to cut compile-time coupling and keep a stable binary interface.",
+     "tier": 7,
+     "prereqs": [
+      "value-semantics",
+      "raii-design"
+     ],
+     "cardTags": [
+      "pimpl"
+     ],
+     "problems": [
+      {
+       "name": "PIMPL a class",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Stable ABI across a boundary",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Compilation firewall header",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "error-handling-architecture",
+     "name": "Error-Handling Architecture",
+     "blurb": "Design failure paths deliberately: exceptions, std::expected, or error codes, and where each boundary sits.",
+     "tier": 7,
+     "prereqs": [
+      "value-objects-entities"
+     ],
+     "cardTags": [
+      "expected"
+     ],
+     "problems": [
+      {
+       "name": "Return std::expected instead of throwing",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Error code vs exception boundary",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Result type with monadic then",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "hexagonal-ports-adapters",
+     "name": "Hexagonal / Ports & Adapters",
+     "blurb": "Isolate domain logic behind ports and plug infrastructure in through adapters for testable layering.",
+     "tier": 7,
+     "prereqs": [
+      "dependency-injection",
+      "adapter-facade"
+     ],
+     "cardTags": [
+      "architecture",
+      "adapter"
+     ],
+     "problems": [
+      {
+       "name": "Define a port interface",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Adapter implementing a port",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Isolate domain from infrastructure",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "data-oriented-design",
+     "name": "Data-Oriented Design vs OOP",
+     "blurb": "Lay out data for the machine, not the object model: contrast AoS with SoA for cache-friendly performance.",
+     "tier": 7,
+     "prereqs": [
+      "value-semantics",
+      "composition-over-inheritance"
+     ],
+     "cardTags": [
+      "architecture",
+      "value-semantics"
+     ],
+     "problems": [
+      {
+       "name": "AoS to SoA transform",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Cache-friendly particle update",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Struct packing for locality",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "dsa",
+   "name": "DS&A Interview Patterns",
+   "icon": "💼",
+   "nodes": [
+    {
+     "id": "hashing-frequency",
+     "name": "Hashing & Frequency Counting",
+     "blurb": "Trade space for time with hash maps/sets to look up, dedupe, and count in O(1); the foundation for most array problems.",
+     "tier": 1,
+     "prereqs": [],
+     "cardTags": [
+      "hash-table",
+      "array"
+     ],
+     "problems": [
+      {
+       "name": "Two Sum",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Group Anagrams",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Contains Duplicate",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Valid Anagram",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Longest Consecutive Sequence",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "two-pointers",
+     "name": "Two Pointers",
+     "blurb": "Walk two indices toward or away from each other on a sorted or symmetric array to converge on pairs/palindromes in O(n).",
+     "tier": 2,
+     "prereqs": [
+      "hashing-frequency"
+     ],
+     "cardTags": [
+      "two-pointers",
+      "array",
+      "sorting"
+     ],
+     "problems": [
+      {
+       "name": "Valid Palindrome",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "3Sum",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Container With Most Water",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Two Sum II - Input Array Is Sorted",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "3Sum Closest",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "prefix-sum",
+     "name": "Prefix Sum",
+     "blurb": "Precompute running totals so any range/subarray sum answers in O(1); pair with a hash map to count subarrays hitting a target.",
+     "tier": 2,
+     "prereqs": [
+      "hashing-frequency"
+     ],
+     "cardTags": [
+      "prefix-sum",
+      "array",
+      "hash-table"
+     ],
+     "problems": [
+      {
+       "name": "Subarray Sum Equals K",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Range Sum Query - Immutable",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Product of Array Except Self",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Contiguous Array",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Find Pivot Index",
+       "difficulty": "easy",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "binary-search",
+     "name": "Binary Search",
+     "blurb": "Halve a sorted (or monotonic) search space each step; also 'binary search the answer' when you can test a candidate in O(n).",
+     "tier": 2,
+     "prereqs": [
+      "hashing-frequency"
+     ],
+     "cardTags": [
+      "binary-search",
+      "array"
+     ],
+     "problems": [
+      {
+       "name": "Search in Rotated Sorted Array",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Koko Eating Bananas",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Binary Search",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Find Minimum in Rotated Sorted Array",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Find First and Last Position of Element in Sorted Array",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Median of Two Sorted Arrays",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "stack",
+     "name": "Stack",
+     "blurb": "Use a LIFO stack to match nested structure, defer work, and evaluate expressions in one pass.",
+     "tier": 2,
+     "prereqs": [
+      "hashing-frequency"
+     ],
+     "cardTags": [
+      "stack",
+      "string"
+     ],
+     "problems": [
+      {
+       "name": "Valid Parentheses",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Min Stack",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Evaluate Reverse Polish Notation",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Basic Calculator",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Implement Queue using Stacks",
+       "difficulty": "easy",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "linked-list",
+     "name": "Linked List",
+     "blurb": "Manipulate nodes by rewiring next-pointers; master reversal, merging, and dummy-head bookkeeping.",
+     "tier": 2,
+     "prereqs": [
+      "hashing-frequency"
+     ],
+     "cardTags": [
+      "linked-list"
+     ],
+     "problems": [
+      {
+       "name": "Merge Two Sorted Lists",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Reverse Linked List",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Remove Nth Node From End of List",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Reorder List",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Add Two Numbers",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Copy List with Random Pointer",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "bit-manipulation",
+     "name": "Bit Manipulation",
+     "blurb": "Use XOR, masks, and shifts to pack state, cancel pairs, and compute without extra memory.",
+     "tier": 2,
+     "prereqs": [
+      "hashing-frequency"
+     ],
+     "cardTags": [
+      "bit-tricks",
+      "array"
+     ],
+     "problems": [
+      {
+       "name": "Single Number",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Number of 1 Bits",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Counting Bits",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Reverse Bits",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Sum of Two Integers",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Missing Number",
+       "difficulty": "easy",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "sliding-window",
+     "name": "Sliding Window",
+     "blurb": "Grow and shrink a contiguous window to answer 'best/longest/shortest subarray or substring' problems in O(n).",
+     "tier": 3,
+     "prereqs": [
+      "two-pointers"
+     ],
+     "cardTags": [
+      "sliding-window",
+      "two-pointers",
+      "string",
+      "array"
+     ],
+     "problems": [
+      {
+       "name": "Best Time to Buy and Sell Stock",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Longest Substring Without Repeating Characters",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Sliding Window Maximum",
+       "difficulty": "hard",
+       "playable": true
+      },
+      {
+       "name": "Longest Repeating Character Replacement",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Minimum Window Substring",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Permutation in String",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "monotonic-stack",
+     "name": "Monotonic Stack",
+     "blurb": "Keep the stack sorted while scanning to find the next/previous greater or smaller element in amortized O(n).",
+     "tier": 3,
+     "prereqs": [
+      "stack"
+     ],
+     "cardTags": [
+      "monotonic-stack",
+      "stack",
+      "array"
+     ],
+     "problems": [
+      {
+       "name": "Daily Temperatures",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Trapping Rain Water",
+       "difficulty": "hard",
+       "playable": true
+      },
+      {
+       "name": "Next Greater Element I",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Largest Rectangle in Histogram",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Car Fleet",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "fast-slow-pointers",
+     "name": "Fast & Slow Pointers",
+     "blurb": "Run two pointers at different speeds (Floyd's tortoise-and-hare) to detect cycles and find midpoints without extra space.",
+     "tier": 3,
+     "prereqs": [
+      "linked-list"
+     ],
+     "cardTags": [
+      "linked-list",
+      "two-pointers"
+     ],
+     "problems": [
+      {
+       "name": "Linked List Cycle",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Linked List Cycle II",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Middle of the Linked List",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Happy Number",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Find the Duplicate Number",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Palindrome Linked List",
+       "difficulty": "easy",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "trees",
+     "name": "Trees: BFS & DFS",
+     "blurb": "Traverse binary trees recursively (DFS) or level-by-level (BFS) to compute depth, structure, and aggregates.",
+     "tier": 3,
+     "prereqs": [
+      "linked-list"
+     ],
+     "cardTags": [
+      "tree",
+      "dfs",
+      "bfs",
+      "recursion"
+     ],
+     "problems": [
+      {
+       "name": "Invert Binary Tree",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Binary Tree Level Order Traversal",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Maximum Depth of Binary Tree",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Diameter of Binary Tree",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Balanced Binary Tree",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Lowest Common Ancestor of a Binary Tree",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Binary Tree Maximum Path Sum",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "heap-priority-queue",
+     "name": "Heap / Priority Queue",
+     "blurb": "Keep the top-K or the running min/max cheaply with a binary heap; ideal for streaming and scheduling problems.",
+     "tier": 3,
+     "prereqs": [
+      "hashing-frequency"
+     ],
+     "cardTags": [
+      "heap",
+      "sorting"
+     ],
+     "problems": [
+      {
+       "name": "Top K Frequent Elements",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Kth Largest Element in an Array",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Find Median from Data Stream",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Merge k Sorted Lists",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Task Scheduler",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Last Stone Weight",
+       "difficulty": "easy",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "intervals",
+     "name": "Intervals",
+     "blurb": "Sort by start/end, then sweep to merge overlaps, insert, or count conflicts.",
+     "tier": 3,
+     "prereqs": [
+      "two-pointers"
+     ],
+     "cardTags": [
+      "intervals",
+      "sorting",
+      "array"
+     ],
+     "problems": [
+      {
+       "name": "Merge Intervals",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Insert Interval",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Non-overlapping Intervals",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Meeting Rooms",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Meeting Rooms II",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "matrix",
+     "name": "Matrix Manipulation",
+     "blurb": "Treat a 2-D grid as an array with (row, col) math to rotate, spiral, or mark in place.",
+     "tier": 3,
+     "prereqs": [
+      "two-pointers"
+     ],
+     "cardTags": [
+      "matrix",
+      "array"
+     ],
+     "problems": [
+      {
+       "name": "Rotate Image",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Spiral Matrix",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Set Matrix Zeroes",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Search a 2D Matrix",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Game of Life",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "binary-search-tree",
+     "name": "Binary Search Tree",
+     "blurb": "Exploit the left<root<right invariant so search, insert, and ordered traversal run in O(height).",
+     "tier": 4,
+     "prereqs": [
+      "trees",
+      "binary-search"
+     ],
+     "cardTags": [
+      "tree",
+      "binary-search",
+      "recursion"
+     ],
+     "problems": [
+      {
+       "name": "Validate Binary Search Tree",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Lowest Common Ancestor of a Binary Search Tree",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Kth Smallest Element in a BST",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Convert Sorted Array to Binary Search Tree",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Insert into a Binary Search Tree",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "backtracking",
+     "name": "Backtracking",
+     "blurb": "Explore the decision tree with DFS, choosing then un-choosing to enumerate valid configurations while pruning dead ends.",
+     "tier": 4,
+     "prereqs": [
+      "trees"
+     ],
+     "cardTags": [
+      "backtracking",
+      "recursion"
+     ],
+     "problems": [
+      {
+       "name": "Combination Sum",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Word Search",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Letter Combinations of a Phone Number",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Palindrome Partitioning",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "N-Queens",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Generate Parentheses",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "graphs",
+     "name": "Graphs: BFS/DFS & Islands",
+     "blurb": "Model connectivity as nodes and edges, then flood-fill or traverse grids/adjacency lists to count components and shortest hops.",
+     "tier": 4,
+     "prereqs": [
+      "trees",
+      "matrix"
+     ],
+     "cardTags": [
+      "graph",
+      "dfs",
+      "bfs",
+      "matrix"
+     ],
+     "problems": [
+      {
+       "name": "Number of Islands",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Clone Graph",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Max Area of Island",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Rotting Oranges",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Pacific Atlantic Water Flow",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Word Ladder",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "greedy",
+     "name": "Greedy",
+     "blurb": "Make the locally optimal choice at each step and prove it yields the global optimum; watch for reachability and exchange arguments.",
+     "tier": 4,
+     "prereqs": [
+      "two-pointers"
+     ],
+     "cardTags": [
+      "greedy",
+      "array"
+     ],
+     "problems": [
+      {
+       "name": "Jump Game",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Jump Game II",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Gas Station",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Hand of Straights",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Maximum Subarray",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Partition Labels",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "trie",
+     "name": "Trie (Prefix Tree)",
+     "blurb": "Store strings in a character-branched tree for O(L) prefix lookups; the backbone of autocomplete and word-search.",
+     "tier": 4,
+     "prereqs": [
+      "trees"
+     ],
+     "cardTags": [
+      "trie",
+      "tree",
+      "string"
+     ],
+     "problems": [
+      {
+       "name": "Implement Trie (Prefix Tree)",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Design Add and Search Words Data Structure",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Word Search II",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Longest Common Prefix",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Replace Words",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "subsets-permutations",
+     "name": "Subsets & Permutations",
+     "blurb": "Systematically generate every subset, combination, or ordering via backtracking, handling duplicates with sorting/skips.",
+     "tier": 5,
+     "prereqs": [
+      "backtracking"
+     ],
+     "cardTags": [
+      "backtracking",
+      "recursion"
+     ],
+     "problems": [
+      {
+       "name": "Subsets",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Permutations",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Subsets II",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Combinations",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Permutations II",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "topological-sort",
+     "name": "Topological Sort",
+     "blurb": "Order a DAG's nodes so every edge points forward using Kahn's BFS or DFS post-order; detects cycles in dependency problems.",
+     "tier": 5,
+     "prereqs": [
+      "graphs"
+     ],
+     "cardTags": [
+      "topological-sort",
+      "graph",
+      "dfs",
+      "bfs"
+     ],
+     "problems": [
+      {
+       "name": "Course Schedule",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Course Schedule II",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Alien Dictionary",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Minimum Height Trees",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Sequence Reconstruction",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "union-find",
+     "name": "Union-Find (DSU)",
+     "blurb": "Maintain disjoint sets with union-by-rank and path compression for near-O(1) connectivity queries and cycle detection.",
+     "tier": 5,
+     "prereqs": [
+      "graphs"
+     ],
+     "cardTags": [
+      "union-find",
+      "graph"
+     ],
+     "problems": [
+      {
+       "name": "Number of Connected Components in an Undirected Graph",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Graph Valid Tree",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Redundant Connection",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Accounts Merge",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Number of Provinces",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "one-d-dp",
+     "name": "1-D Dynamic Programming",
+     "blurb": "Turn overlapping subproblems into a linear DP table/recurrence; memoize or tabulate over a single dimension.",
+     "tier": 5,
+     "prereqs": [
+      "backtracking"
+     ],
+     "cardTags": [
+      "dynamic-programming",
+      "array"
+     ],
+     "problems": [
+      {
+       "name": "Climbing Stairs",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Coin Change",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "House Robber",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Longest Increasing Subsequence",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Word Break",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Maximum Product Subarray",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Decode Ways",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "two-d-dp",
+     "name": "2-D Dynamic Programming",
+     "blurb": "Extend DP to a grid/table indexed by two variables to solve matching, pathing, and knapsack-style problems.",
+     "tier": 6,
+     "prereqs": [
+      "one-d-dp"
+     ],
+     "cardTags": [
+      "dynamic-programming",
+      "matrix",
+      "string"
+     ],
+     "problems": [
+      {
+       "name": "Unique Paths",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Longest Common Subsequence",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Edit Distance",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "0/1 Knapsack",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Longest Palindromic Substring",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Maximal Square",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "fpga",
+   "name": "FPGA for HFT",
+   "icon": "🔧",
+   "nodes": [
+    {
+     "id": "what-is-an-fpga",
+     "name": "What Is an FPGA",
+     "blurb": "A field-programmable gate array is a chip of reconfigurable logic (LUTs, flip-flops, and CLBs) you wire into any digital circuit after manufacturing.",
+     "tier": 1,
+     "prereqs": [],
+     "cardTags": [
+      "fpga",
+      "fundamentals"
+     ],
+     "problems": [
+      {
+       "name": "Blinking LED",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Implement a 2-to-1 mux in one LUT",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Map a 4-input AND to a LUT4",
+       "difficulty": "easy",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "hard-blocks-bram-dsp",
+     "name": "Hard Blocks: BRAM & DSP",
+     "blurb": "Beyond the soft fabric sit dedicated block RAM and DSP slices that give you cheap on-chip memory and fast multiply-accumulate.",
+     "tier": 2,
+     "prereqs": [
+      "what-is-an-fpga"
+     ],
+     "cardTags": [
+      "fpga",
+      "bram",
+      "dsp"
+     ],
+     "problems": [
+      {
+       "name": "Infer a single-port BRAM",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Infer a DSP multiply-accumulate",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "fpga-vs-asic-vs-cpu",
+     "name": "FPGA vs ASIC vs CPU",
+     "blurb": "FPGAs trade the raw speed of an ASIC and the flexibility of a CPU for reconfigurable, spatial, parallel compute.",
+     "tier": 2,
+     "prereqs": [
+      "what-is-an-fpga"
+     ],
+     "cardTags": [
+      "fpga",
+      "fundamentals"
+     ],
+     "problems": [
+      {
+       "name": "Compare latency of a filter on CPU vs FPGA",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Decide FPGA or ASIC for a fixed-volume product",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "hardware-thinking",
+     "name": "Hardware Thinking: Parallel by Default",
+     "blurb": "HDL describes structure, not a sequence: everything you write runs at once unless you deliberately serialize it.",
+     "tier": 2,
+     "prereqs": [
+      "what-is-an-fpga"
+     ],
+     "cardTags": [
+      "hdl",
+      "fundamentals",
+      "verilog"
+     ],
+     "problems": [
+      {
+       "name": "Describe eight independent adders",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Spot the sequential-vs-parallel trap",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "combinational-logic",
+     "name": "Combinational Logic",
+     "blurb": "Purely combinational logic maps inputs to outputs with no memory, built from gates, muxes, and lookup tables.",
+     "tier": 3,
+     "prereqs": [
+      "hardware-thinking",
+      "what-is-an-fpga"
+     ],
+     "cardTags": [
+      "hdl",
+      "verilog",
+      "fundamentals"
+     ],
+     "problems": [
+      {
+       "name": "4-bit ripple-carry adder",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "8-to-1 multiplexer",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Binary-to-7-segment decoder",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "toolchain",
+     "name": "Toolchain: Synthesis, P&R, Bitstream",
+     "blurb": "Your HDL flows through synthesis, place-and-route, and timing analysis before it becomes a bitstream loaded into the chip.",
+     "tier": 4,
+     "prereqs": [
+      "combinational-logic"
+     ],
+     "cardTags": [
+      "fpga",
+      "timing",
+      "fundamentals"
+     ],
+     "problems": [
+      {
+       "name": "Read a synthesis utilization report",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Apply a timing constraint (SDC/XDC)",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Interpret a P&R timing summary",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "sequential-logic",
+     "name": "Sequential Logic & Flip-Flops",
+     "blurb": "Registers built from flip-flops remember state between clock edges, turning combinational logic into machines with memory.",
+     "tier": 4,
+     "prereqs": [
+      "combinational-logic"
+     ],
+     "cardTags": [
+      "hdl",
+      "verilog",
+      "clock"
+     ],
+     "problems": [
+      {
+       "name": "4-bit counter",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Shift register",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Edge detector",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "fixed-vs-float",
+     "name": "Fixed-Point vs Float",
+     "blurb": "Fixed-point arithmetic is far cheaper and faster in fabric than IEEE floating point, at the cost of managing range and precision.",
+     "tier": 4,
+     "prereqs": [
+      "hard-blocks-bram-dsp",
+      "combinational-logic"
+     ],
+     "cardTags": [
+      "dsp",
+      "fundamentals"
+     ],
+     "problems": [
+      {
+       "name": "Q4.12 fixed-point multiplier",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Round and saturate a fixed-point accumulator",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "blocking-vs-nonblocking",
+     "name": "Blocking vs Non-Blocking Assignment",
+     "blurb": "Use non-blocking for sequential logic and blocking for combinational, or your simulation and silicon will disagree.",
+     "tier": 5,
+     "prereqs": [
+      "sequential-logic"
+     ],
+     "cardTags": [
+      "hdl",
+      "verilog",
+      "testbench"
+     ],
+     "problems": [
+      {
+       "name": "Fix a race from misused blocking assignment",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Swap two registers correctly",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "clocks-and-fmax",
+     "name": "Clocks, Reset & Fmax",
+     "blurb": "The clock paces every register and Fmax is its highest workable frequency; resets can be synchronous or asynchronous, each with trade-offs.",
+     "tier": 5,
+     "prereqs": [
+      "sequential-logic"
+     ],
+     "cardTags": [
+      "clock",
+      "timing"
+     ],
+     "problems": [
+      {
+       "name": "Build a clock divider",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Estimate Fmax from a logic depth",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Reset synchronizer (async assert, sync deassert)",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "bram-vs-registers",
+     "name": "BRAM vs Registers",
+     "blurb": "Choose block RAM for dense addressed storage and registers for wide parallel access; the wrong choice wastes fabric or timing.",
+     "tier": 5,
+     "prereqs": [
+      "hard-blocks-bram-dsp",
+      "sequential-logic"
+     ],
+     "cardTags": [
+      "bram",
+      "fundamentals"
+     ],
+     "problems": [
+      {
+       "name": "Dual-port BRAM buffer",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Decide register file vs BRAM for a lookup",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "fsm-design",
+     "name": "FSMs & One-Hot Encoding",
+     "blurb": "Finite state machines sequence control logic; one-hot encoding trades flip-flops for shallow, fast decode logic.",
+     "tier": 6,
+     "prereqs": [
+      "blocking-vs-nonblocking",
+      "sequential-logic"
+     ],
+     "cardTags": [
+      "fsm",
+      "hdl",
+      "verilog"
+     ],
+     "problems": [
+      {
+       "name": "Debounce a button (FSM)",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Sequence detector FSM",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Traffic-light controller",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "setup-hold-timing",
+     "name": "Setup/Hold, Critical Path & Timing Closure",
+     "blurb": "Data must be stable a setup time before and a hold time after each edge; the slowest register-to-register critical path sets your Fmax and must meet timing.",
+     "tier": 6,
+     "prereqs": [
+      "clocks-and-fmax"
+     ],
+     "cardTags": [
+      "timing",
+      "clock"
+     ],
+     "problems": [
+      {
+       "name": "Compute slack for a register-to-register path",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Diagnose a hold violation",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Shorten a critical path by re-timing",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "testbench-simulation",
+     "name": "Testbenches & Simulation",
+     "blurb": "Simulation with a testbench drives stimulus and checks responses so you catch bugs before place-and-route.",
+     "tier": 6,
+     "prereqs": [
+      "blocking-vs-nonblocking",
+      "toolchain"
+     ],
+     "cardTags": [
+      "testbench",
+      "hdl",
+      "verilog"
+     ],
+     "problems": [
+      {
+       "name": "Testbench for a 4-bit counter",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Self-checking testbench with assertions",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Waveform-driven debug of an FSM",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "metastability-cdc",
+     "name": "Metastability & Clock-Domain Crossing",
+     "blurb": "A signal sampled between clock domains can go metastable; a 2-FF synchronizer or async FIFO tames it.",
+     "tier": 7,
+     "prereqs": [
+      "setup-hold-timing",
+      "clocks-and-fmax"
+     ],
+     "cardTags": [
+      "metastability",
+      "cdc",
+      "clock"
+     ],
+     "problems": [
+      {
+       "name": "2-FF synchronizer",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "FIFO with CDC",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Pulse synchronizer across domains",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "pipelining",
+     "name": "Pipelining & Parallelism",
+     "blurb": "Registering stages raises Fmax and throughput at the cost of latency and initiation interval; unrolling and replication process many items per cycle.",
+     "tier": 7,
+     "prereqs": [
+      "setup-hold-timing"
+     ],
+     "cardTags": [
+      "pipelining",
+      "timing",
+      "latency"
+     ],
+     "problems": [
+      {
+       "name": "Pipelined multiplier",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Compute II of a pipelined loop",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Unroll a dot-product by 4",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Replicate a comparator tree for wide search",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "hls-cpp-to-rtl",
+     "name": "HLS: C++ to RTL",
+     "blurb": "High-level synthesis compiles annotated C++ into RTL, letting you pipeline and unroll with pragmas instead of hand-written HDL.",
+     "tier": 8,
+     "prereqs": [
+      "pipelining",
+      "toolchain"
+     ],
+     "cardTags": [
+      "hls",
+      "pipelining"
+     ],
+     "problems": [
+      {
+       "name": "Pipeline a loop with an HLS pragma",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Partition an array for parallel access",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Hit II=1 on a streaming kernel",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "tick-to-trade",
+     "name": "Tick-to-Trade in Nanoseconds",
+     "blurb": "HFT judges an FPGA on tick-to-trade latency and determinism: fixed, jitter-free nanoseconds from market data in to order out.",
+     "tier": 8,
+     "prereqs": [
+      "pipelining",
+      "metastability-cdc"
+     ],
+     "cardTags": [
+      "tick-to-trade",
+      "latency",
+      "determinism"
+     ],
+     "problems": [
+      {
+       "name": "Budget a tick-to-trade latency path",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Minimize jitter in a datapath",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "inline-feed-handler",
+     "name": "Inline-on-NIC Feed Handlers",
+     "blurb": "A feed handler decodes market data directly in the NIC fabric, parsing packets on the wire with zero host round-trip.",
+     "tier": 9,
+     "prereqs": [
+      "tick-to-trade",
+      "fsm-design"
+     ],
+     "cardTags": [
+      "tick-to-trade",
+      "latency",
+      "fsm"
+     ],
+     "problems": [
+      {
+       "name": "Parse a fixed-layout market-data packet",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Streaming line-rate order-book update",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "hardware-pretrade-risk",
+     "name": "Hardware Pre-Trade Risk",
+     "blurb": "Risk checks run inline in fabric so every outgoing order is validated in a few deterministic nanoseconds before it leaves.",
+     "tier": 9,
+     "prereqs": [
+      "tick-to-trade",
+      "fixed-vs-float"
+     ],
+     "cardTags": [
+      "tick-to-trade",
+      "determinism",
+      "latency"
+     ],
+     "problems": [
+      {
+       "name": "Inline fat-finger price/size check",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Running position-limit accumulator",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "ab-feed-arbitration",
+     "name": "A/B Feed Arbitration",
+     "blurb": "Exchanges publish redundant A and B feeds; hardware arbitrates them by sequence number to fill gaps at line rate.",
+     "tier": 10,
+     "prereqs": [
+      "inline-feed-handler",
+      "bram-vs-registers"
+     ],
+     "cardTags": [
+      "tick-to-trade",
+      "cdc",
+      "bram"
+     ],
+     "problems": [
+      {
+       "name": "Sequence-number gap detector",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Arbitrate A/B feeds into one ordered stream",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "kernel-bypass-vs-full-hw",
+     "name": "Kernel Bypass vs Full Hardware",
+     "blurb": "Kernel bypass keeps strategy on the host CPU; full-hardware puts the whole tick-to-trade loop in fabric for the lowest latency.",
+     "tier": 11,
+     "prereqs": [
+      "inline-feed-handler",
+      "hardware-pretrade-risk",
+      "ab-feed-arbitration"
+     ],
+     "cardTags": [
+      "tick-to-trade",
+      "latency",
+      "determinism"
+     ],
+     "problems": [
+      {
+       "name": "Compare latency: kernel bypass vs inline FPGA",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Partition a strategy across host and fabric",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "hft",
+   "name": "Low-Latency / HFT",
+   "icon": "⚡",
+   "nodes": [
+    {
+     "id": "cache-lines",
+     "name": "CPU Cache & Cache Lines",
+     "blurb": "The cache line, not the byte, is the real unit of memory access.",
+     "tier": 1,
+     "prereqs": [],
+     "cardTags": [
+      "cache",
+      "memory",
+      "hft"
+     ],
+     "problems": [
+      {
+       "name": "Print the L1 cache line size",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Pack a struct into one 64-byte cache line",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Sequential vs strided array-sum benchmark",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "branchless",
+     "name": "Branch Prediction & Branchless Code",
+     "blurb": "A mispredicted branch costs more than the work it guards, so remove it.",
+     "tier": 1,
+     "prereqs": [],
+     "cardTags": [
+      "branch-prediction",
+      "hot-path"
+     ],
+     "problems": [
+      {
+       "name": "Branchless min",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Branchless abs",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Branchless clamp",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Sort a branch-heavy loop to make it predictable",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "bit-tricks",
+     "name": "Bit Tricks & Integer Hacks",
+     "blurb": "Bit manipulation replaces loops, branches, and division on the hot path.",
+     "tier": 1,
+     "prereqs": [],
+     "cardTags": [
+      "bit-tricks",
+      "hot-path"
+     ],
+     "problems": [
+      {
+       "name": "Round up to power of two",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "popcount without the builtin",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Check if a number is a power of two",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Isolate the lowest set bit",
+       "difficulty": "easy",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "memory-hierarchy",
+     "name": "Memory Hierarchy & Prefetching",
+     "blurb": "Registers to DRAM span three orders of magnitude; prefetch to hide the miss.",
+     "tier": 2,
+     "prereqs": [
+      "cache-lines"
+     ],
+     "cardTags": [
+      "memory",
+      "cache",
+      "latency"
+     ],
+     "problems": [
+      {
+       "name": "Software-prefetch a linked-list traversal",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Blocked (tiled) matrix multiply",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Measure the latency of each cache level",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "false-sharing",
+     "name": "False Sharing & alignas",
+     "blurb": "Two hot variables on one cache line ping-pong between cores for no reason.",
+     "tier": 2,
+     "prereqs": [
+      "cache-lines"
+     ],
+     "cardTags": [
+      "false-sharing",
+      "cache",
+      "concurrency"
+     ],
+     "problems": [
+      {
+       "name": "Cache-line aligned counter (kill false sharing)",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Pad a struct with alignas(64)",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Two-thread counter false-sharing benchmark",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "cache-data-structures",
+     "name": "Cache-Friendly Data Structures (SoA, flat maps)",
+     "blurb": "Contiguous, flat layouts beat pointer-chasing trees on real hardware.",
+     "tier": 2,
+     "prereqs": [
+      "cache-lines"
+     ],
+     "cardTags": [
+      "cache",
+      "memory",
+      "hot-path"
+     ],
+     "problems": [
+      {
+       "name": "O(1) swap-remove",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "AoS to SoA transform",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Open-addressing flat hash map lookup",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "type-punning",
+     "name": "Type Punning & Strict Aliasing",
+     "blurb": "Reinterpreting bits is essential yet trivially undefined if done wrong.",
+     "tier": 2,
+     "prereqs": [
+      "bit-tricks"
+     ],
+     "cardTags": [
+      "aliasing",
+      "undefined-behavior",
+      "bit-tricks"
+     ],
+     "problems": [
+      {
+       "name": "Type-pun a float without UB",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Fast inverse square root bit hack",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "memcpy-based reinterpret helper",
+       "difficulty": "easy",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "hot-path-cpp",
+     "name": "Hot-Path C++ (no virtual / exceptions / shared_ptr)",
+     "blurb": "Virtual dispatch, throwing, and refcount bumps are latency you cannot afford.",
+     "tier": 2,
+     "prereqs": [
+      "branchless"
+     ],
+     "cardTags": [
+      "hot-path",
+      "virtual",
+      "smart-pointers"
+     ],
+     "problems": [
+      {
+       "name": "Devirtualize a callback with CRTP",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Replace shared_ptr with a raw handle",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Return an error code instead of throwing",
+       "difficulty": "easy",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "denormals",
+     "name": "Denormals & FTZ",
+     "blurb": "Subnormal floats trap into microcode; flush-to-zero keeps the pipeline fast.",
+     "tier": 2,
+     "prereqs": [
+      "branchless"
+     ],
+     "cardTags": [
+      "denormals",
+      "hot-path"
+     ],
+     "problems": [
+      {
+       "name": "Enable flush-to-zero (FTZ/DAZ)",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Benchmark a loop that produces denormals",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "memory-model",
+     "name": "The C++ Memory Model & memory_order",
+     "blurb": "Acquire/release fences the compiler and CPU from reordering your loads and stores.",
+     "tier": 3,
+     "prereqs": [
+      "false-sharing"
+     ],
+     "cardTags": [
+      "memory-order",
+      "concurrency",
+      "atomics"
+     ],
+     "problems": [
+      {
+       "name": "Publish a flag with release/acquire",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Spot the data race in a relaxed load",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Sequentially-consistent vs relaxed counter",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "zero-copy",
+     "name": "Zero-Copy: RVO & noexcept",
+     "blurb": "Let the compiler elide copies and moves so returning by value stays free.",
+     "tier": 3,
+     "prereqs": [
+      "hot-path-cpp"
+     ],
+     "cardTags": [
+      "move",
+      "hot-path"
+     ],
+     "problems": [
+      {
+       "name": "Force NRVO on a large return",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Write a noexcept move constructor",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Return a value instead of an out-param",
+       "difficulty": "easy",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "object-pool",
+     "name": "Object Pools & No Hot-Path Allocation",
+     "blurb": "malloc is unbounded latency; pre-allocate and recycle from a fixed pool.",
+     "tier": 3,
+     "prereqs": [
+      "hot-path-cpp"
+     ],
+     "cardTags": [
+      "allocation",
+      "object-pool",
+      "hot-path"
+     ],
+     "problems": [
+      {
+       "name": "Fixed-capacity object pool",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Intrusive free-list allocator",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Arena / bump allocator",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "huge-pages",
+     "name": "Huge Pages & the TLB",
+     "blurb": "2MB pages shrink the page table so hot working sets stay TLB-resident.",
+     "tier": 3,
+     "prereqs": [
+      "memory-hierarchy"
+     ],
+     "cardTags": [
+      "huge-pages",
+      "tlb",
+      "memory"
+     ],
+     "problems": [
+      {
+       "name": "Back an allocation with 2MB huge pages",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Count TLB misses with perf",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "numa",
+     "name": "NUMA & Page Faults",
+     "blurb": "Remote memory and first-touch faults add latency you must design away.",
+     "tier": 3,
+     "prereqs": [
+      "memory-hierarchy"
+     ],
+     "cardTags": [
+      "numa",
+      "memory",
+      "latency"
+     ],
+     "problems": [
+      {
+       "name": "Pin a thread to a NUMA node",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "First-touch page placement",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "Pre-fault a buffer to avoid hot-path page faults",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "latency-measurement",
+     "name": "Measuring Latency: rdtsc & Tail Percentiles",
+     "blurb": "The mean lies; measure with the TSC and report p99 / p99.9 tails.",
+     "tier": 3,
+     "prereqs": [
+      "memory-hierarchy"
+     ],
+     "cardTags": [
+      "latency",
+      "timing",
+      "hft"
+     ],
+     "problems": [
+      {
+       "name": "TSC-based timer",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "p99 / p99.9 latency histogram",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Warm the instruction cache before timing",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "atomics",
+     "name": "std::atomic",
+     "blurb": "Lock-free primitives built on hardware atomics and the right memory order.",
+     "tier": 4,
+     "prereqs": [
+      "memory-model"
+     ],
+     "cardTags": [
+      "atomics",
+      "concurrency",
+      "memory-order"
+     ],
+     "problems": [
+      {
+       "name": "Atomic increment with fetch_add",
+       "difficulty": "easy",
+       "playable": false
+      },
+      {
+       "name": "Spinlock from atomic_flag",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "compare_exchange_weak retry loop",
+       "difficulty": "medium",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "kernel-bypass",
+     "name": "Kernel Bypass",
+     "blurb": "Skip the syscall and the network stack; busy-poll the NIC from user space.",
+     "tier": 4,
+     "prereqs": [
+      "numa"
+     ],
+     "cardTags": [
+      "hft",
+      "latency",
+      "hot-path"
+     ],
+     "problems": [
+      {
+       "name": "Busy-poll a ring instead of blocking read",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Sketch a DPDK-style RX poll loop",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "cas-aba",
+     "name": "CAS & the ABA Problem",
+     "blurb": "Compare-and-swap is the atom of lock-free code, and ABA is its classic trap.",
+     "tier": 5,
+     "prereqs": [
+      "atomics"
+     ],
+     "cardTags": [
+      "atomics",
+      "lock-free",
+      "concurrency"
+     ],
+     "problems": [
+      {
+       "name": "Lock-free stack push (CAS loop)",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Tagged pointer to beat ABA",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "lock-free",
+     "name": "Lock-Free vs Wait-Free",
+     "blurb": "Lock-free guarantees system progress; wait-free guarantees it per thread.",
+     "tier": 5,
+     "prereqs": [
+      "atomics"
+     ],
+     "cardTags": [
+      "lock-free",
+      "concurrency",
+      "atomics"
+     ],
+     "problems": [
+      {
+       "name": "Seqlock",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Hazard pointers",
+       "difficulty": "hard",
+       "playable": false
+      },
+      {
+       "name": "Treiber stack",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    },
+    {
+     "id": "spsc-ring",
+     "name": "SPSC Ring Buffer",
+     "blurb": "The workhorse queue: single producer, single consumer, no locks, no allocation.",
+     "tier": 6,
+     "prereqs": [
+      "lock-free",
+      "cache-data-structures"
+     ],
+     "cardTags": [
+      "ring-buffer",
+      "spsc",
+      "lock-free"
+     ],
+     "problems": [
+      {
+       "name": "SPSC ring buffer",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Bounded queue with power-of-two masking",
+       "difficulty": "medium",
+       "playable": false
+      },
+      {
+       "name": "MPMC queue",
+       "difficulty": "hard",
+       "playable": false
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

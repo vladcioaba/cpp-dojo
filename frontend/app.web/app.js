@@ -6,13 +6,17 @@ const { esc, inline, codeBlock } = window.CPP;
    bundle by the backend, which proxies it from GitHub raw. Card types are
    explicit in each card header, so one file + one default type is enough.
    Fallbacks let the app still load if the backend proxy is unavailable. */
+const WORKER = "https://cpp-dojo.vlad-cioaba.workers.dev";
 const BUNDLE_SOURCES = [
-  "/content/bundle.md",                                                        // backend proxy (prod)
-  "https://raw.githubusercontent.com/vladcioaba/cpp-dojo-datasets/main/bundle.md", // direct raw
-  "../datasets/bundle.md",                                                     // local dev via submodule
+  WORKER + "/content/bundle.md",  // fresh via backend proxy (works online in the native app too)
+  "/content/bundle.md",           // same-origin on web
+  "/offline/bundle.md",           // snapshot bundled into the app → works offline
+  "../datasets/bundle.md",        // local dev via submodule
 ];
 
-const API_RUN = "/api/run";
+// absolute so the native app (loaded from a local bundle, not the Worker
+// origin) still reaches the compile backend; on web it resolves same-origin
+const API_RUN = WORKER + "/api/run";
 const XP = { quizRight: 10, quizWrong: 2, exercise: 20, challenge: 50 };
 
 /* ── state ───────────────────────────────────────────────────── */
@@ -60,7 +64,7 @@ function parseCards(text, defaultType) {
     const title = m ? m[2] : head;
 
     const meta = {};
-    body = body.replace(/^(tags|source|difficulty|track):\s*(.+)$/gm, (_, k, v) => {
+    body = body.replace(/^(tags|source|difficulty|track|lang):\s*(.+)$/gm, (_, k, v) => {
       meta[k] = v.trim(); return "";
     });
     // progressive hints + editorial (stripped before the id hash so adding
@@ -78,6 +82,7 @@ function parseCards(text, defaultType) {
       type, title,
       track: meta.track || "core",
       difficulty: meta.difficulty || "",
+      lang: meta.lang === "python" ? "python" : "cpp",
       tags: (meta.tags || "").split(",").map(t => t.trim()).filter(Boolean),
       hints, editorial,
       blocks: parseBlocks(body),
@@ -97,8 +102,9 @@ function parseBlocks(body) {
       i++;
       while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
       i++;
-      const starter = /^\s*\/\/\s*starter\b/.test(buf[0] || "");
-      const harness = /^\s*\/\/\s*harness\b/.test(buf[0] || "");
+      // starter/harness markers work for C++ (//) and Python (#) comments
+      const starter = /^\s*(\/\/|#)\s*starter\b/.test(buf[0] || "");
+      const harness = /^\s*(\/\/|#)\s*harness\b/.test(buf[0] || "");
       blocks.push({
         kind: "code",
         code: (starter || harness) ? buf.slice(1).join("\n") : buf.join("\n"),
@@ -349,13 +355,16 @@ function renderExercise(card, body, isChallenge) {
     markDone(card.id);
   };
 
+  const py = card.lang === "python";
+  const runCmd = py ? "python3 main.py" : "g++ -std=c++20 main.cpp && ./a.out";
   check.onclick = async () => {
     if (!solution) return;
     if (harness) {
-      verdict.textContent = "⧗ compiling…";
+      verdict.textContent = py ? "⧗ running…" : "⧗ compiling…";
       verdict.className = "verdict";
       check.disabled = true;
-      const res = await compileRun(harness.code.replace("//__USER__", () => ta.value));
+      const marker = py ? "#__USER__" : "//__USER__";
+      const res = await compileRun(harness.code.replace(marker, () => ta.value), card.lang);
       check.disabled = false;
       if (res) {
         out.hidden = false;
@@ -364,10 +373,10 @@ function renderExercise(card, body, isChallenge) {
           verdict.textContent = "✗ compile error";
           verdict.className = "verdict no";
         } else if (res.run.exit === 0 && /\bPASS\b/.test(res.run.stdout)) {
-          out.textContent = "$ g++ -std=c++20 main.cpp && ./a.out\n" + res.run.stdout.trim();
+          out.textContent = "$ " + runCmd + "\n" + res.run.stdout.trim();
           pass();
         } else {
-          out.textContent = "$ ./a.out\n" + (res.run.stdout + "\n" + res.run.stderr).trim() +
+          out.textContent = "$ " + runCmd + "\n" + (res.run.stdout + "\n" + res.run.stderr).trim() +
             `\n[exit ${res.run.exit}]`;
           verdict.textContent = "✗ runtime check failed";
           verdict.className = "verdict no";
@@ -399,12 +408,12 @@ function renderExercise(card, body, isChallenge) {
   body.append(out, solWrap);
 }
 
-async function compileRun(code) {
+async function compileRun(code, lang) {
   try {
     const r = await fetch(API_RUN, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, lang: lang || "cpp" }),
     });
     if (!r.ok) return null;
     return await r.json();
@@ -463,7 +472,7 @@ function syncScore() {
   if (!body) return;
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
-    fetch("/api/score", {
+    fetch(WORKER + "/api/score", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -574,6 +583,7 @@ const TRACKS = [
   { id: "quant", label: "📊 quant", title: "probability & mental-math only" },
   { id: "fpga", label: "🔧 FPGA", title: "FPGA / hardware only" },
   { id: "design", label: "🏛 design", title: "OOP, patterns & architecture only" },
+  { id: "python", label: "🐍 Python", title: "Python — runs on the backend" },
 ];
 let track = localStorage.getItem("cppdojo-track") || "all";
 
