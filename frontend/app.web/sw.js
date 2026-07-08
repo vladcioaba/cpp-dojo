@@ -3,7 +3,7 @@
    - content .md    : network-first, cache fallback (works offline, updates live)
    - everything else: cache-first shell (instant loads, installable) */
 
-const VERSION = "v9";
+const VERSION = "v11";
 const SHELL = "shell-" + VERSION;
 const RUNTIME = "runtime-" + VERSION;
 
@@ -42,18 +42,33 @@ self.addEventListener("fetch", e => {
     url.hostname === "raw.githubusercontent.com";
 
   if (isContent) {
-    // network-first so pushed content shows up; fall back to cache offline
+    // stale-while-revalidate: serve the cached bundle instantly (fast first
+    // paint, works offline), refresh it in the background for next load.
     e.respondWith(
-      fetch(request).then(res => {
-        const copy = res.clone();
-        caches.open(RUNTIME).then(c => c.put(request, copy));
-        return res;
-      }).catch(() => caches.match(request))
+      caches.match(request).then(cached => {
+        const fetching = fetch(request).then(res => {
+          if (res.ok) caches.open(RUNTIME).then(c => c.put(request, res.clone()));
+          return res;
+        }).catch(() => cached);
+        return cached || fetching;
+      })
     );
     return;
   }
 
-  // app shell: cache-first, revalidate in the background
+  // HTML navigations: network-first (fall back to cache offline). Prevents a
+  // stale cached page/nav from sticking after a deploy.
+  if (request.mode === "navigate") {
+    e.respondWith(
+      fetch(request).then(res => {
+        if (res.ok) caches.open(SHELL).then(c => c.put(request, res.clone()));
+        return res;
+      }).catch(() => caches.match(request).then(c => c || caches.match("/index.html")))
+    );
+    return;
+  }
+
+  // other shell assets (css/js/icons): cache-first, revalidate in background
   e.respondWith(
     caches.match(request).then(cached => {
       const fetched = fetch(request).then(res => {

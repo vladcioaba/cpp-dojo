@@ -143,7 +143,7 @@ function runArith(diff, n) {
   const clock = makeClock(document.getElementById("clock"));
   const qEl = document.getElementById("q"), input = document.getElementById("ans");
   const prog = document.getElementById("prog"), fill = document.getElementById("fill");
-  document.getElementById("quit").onclick = setup;
+  document.getElementById("quit").onclick = () => { clock.stop(); setup(); };
 
   const show = () => {
     qEl.textContent = qs[i].text;

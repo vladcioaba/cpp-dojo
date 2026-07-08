@@ -43,11 +43,18 @@ function isToday(ts) { return ts && dayStr(new Date(ts)) === dayStr(); }
 const state = loadState();
 const done = state.done || {};
 const srs = state.srs || {};
-let byTag = new Map(), byTitle = new Map(), trees = [];
+let byTag = new Map(), byTitle = new Map(), tagFreq = new Map(), trees = [];
 
+// match skills.js: a node's single most distinctive (rarest) tag identifies it
+function primaryTag(node) {
+  const tags = node.cardTags || [];
+  if (!tags.length) return null;
+  return tags.reduce((best, t) => (tagFreq.get(t) || 0) < (tagFreq.get(best) || 1e9) ? t : best, tags[0]);
+}
 function nodeStats(node) {
   const pool = new Map();
-  for (const t of node.cardTags || []) for (const c of byTag.get(t) || []) pool.set(c.id, c);
+  const pt = primaryTag(node);
+  for (const c of (pt && byTag.get(pt)) || []) pool.set(c.id, c);
   for (const p of node.problems || []) if (p.playable && byTitle.has(p.name)) { const c = byTitle.get(p.name); pool.set(c.id, c); }
   const ids = [...pool.keys()];
   const solved = ids.filter(id => done[id] === "ok").length;
@@ -59,7 +66,7 @@ function status(node, sById) {
   const s = sById.get(node.id);
   if (s.total > 0 && s.pct >= 0.75) return "mastered";
   if (s.solved > 0 || s.attempted > 0) return "learning";
-  const met = (node.prereqs || []).every(pid => { const ps = sById.get(pid); return ps && ps.total > 0 && ps.pct >= 0.5; });
+  const met = (node.prereqs || []).every(pid => { const ps = sById.get(pid); return !ps || ps.total === 0 || ps.pct >= 0.5; });
   return met || !node.prereqs?.length ? "available" : "locked";
 }
 
@@ -161,7 +168,7 @@ function render() {
     trees = (await sk.json()).trees || [];
     for (const c of parseBundle(await bd.text())) {
       byTitle.set(c.title, c);
-      for (const t of c.tags) { if (!byTag.has(t)) byTag.set(t, []); byTag.get(t).push(c); }
+      for (const t of c.tags) { if (!byTag.has(t)) byTag.set(t, []); byTag.get(t).push(c); tagFreq.set(t, (tagFreq.get(t) || 0) + 1); }
     }
     render();
   } catch (e) {

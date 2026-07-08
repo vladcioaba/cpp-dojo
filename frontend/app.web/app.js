@@ -23,7 +23,7 @@ function load() {
   try {
     return Object.assign({ xp: 0, streak: 0, lastDay: "", done: {}, srs: {} },
       JSON.parse(localStorage.getItem("cppdojo") || "{}"));
-  } catch { return { xp: 0, streak: 0, lastDay: "", done: {} }; }
+  } catch { return { xp: 0, streak: 0, lastDay: "", done: {}, srs: {} }; }
 }
 function save() { localStorage.setItem("cppdojo", JSON.stringify(state)); }
 
@@ -137,11 +137,20 @@ const seenIO = new IntersectionObserver(
 const FILE_EXT = { fact: "md", quiz: "cpp", exercise: "cpp", snippet: "cpp", challenge: "cpp" };
 const FILE_STEM = { fact: "fact", quiz: "quiz", exercise: "drill", snippet: "snip", challenge: "chal" };
 
+const liveTimers = new Set();  // challenge timers, cleared when the feed re-renders
+
 function render(cards, isReview) {
+  liveTimers.forEach(clearInterval);
+  liveTimers.clear();
   feed.innerHTML = "";
   if (isReview && !cards.length) {
     feed.innerHTML = `<div class="review-empty">nothing due for review right now ✓<br>
       <span>miss a quiz or challenge and it comes back here on a spaced schedule</span></div>`;
+    return;
+  }
+  if (!isReview && !cards.length) {
+    feed.innerHTML = `<div class="review-empty">no cards match these filters<br>
+      <span>tap a chip, or reset the track / difficulty</span></div>`;
     return;
   }
   cards.forEach((card, idx) => {
@@ -163,7 +172,7 @@ function render(cards, isReview) {
       <div class="card-body"><h2>${inline(card.title)}</h2></div>`;
 
     const body = el.querySelector(".card-body");
-    if (card.type === "quiz") renderQuiz(card, body);
+    if (card.type === "quiz") renderQuiz(card, body, isReview);
     else if (card.type === "exercise") renderExercise(card, body);
     else if (card.type === "challenge") renderExercise(card, body, true);
     else if (card.type === "snippet") renderSnippet(card, body);
@@ -191,7 +200,7 @@ function renderSnippet(card, body) {
     body.insertAdjacentHTML("beforeend", `<div class="analysis">${analysis.join("")}</div>`);
 }
 
-function renderQuiz(card, body) {
+function renderQuiz(card, body, isReview) {
   const optBlock = card.blocks.find(b => b.kind === "options");
   const quote = card.blocks.find(b => b.kind === "quote");
   for (const b of card.blocks) {
@@ -202,7 +211,8 @@ function renderQuiz(card, body) {
 
   const wrap = document.createElement("div");
   wrap.className = "options";
-  const answered = card.id in state.done;
+  // in the review queue a card is answerable again (so SRS can re-schedule it)
+  const answered = !isReview && card.id in state.done;
 
   optBlock.opts.forEach(opt => {
     const btn = document.createElement("button");
@@ -248,6 +258,10 @@ function renderExercise(card, body, isChallenge) {
   ta.className = "editor";
   ta.placeholder = "// type your C++ here";
   ta.spellcheck = false;
+  // stop mobile keyboards from mangling code (capitalizing keywords, smart quotes)
+  ta.autocapitalize = "none";
+  ta.setAttribute("autocorrect", "off");
+  ta.autocomplete = "off";
 
   // Challenge timer: counts up from the first keystroke, freezes on pass.
   let timerEl = null, t0 = 0, tick = null;
@@ -263,6 +277,7 @@ function renderExercise(card, body, isChallenge) {
       tick = setInterval(() => {
         timerEl.textContent = ((performance.now() - t0) / 1000).toFixed(1) + "s";
       }, 100);
+      liveTimers.add(tick);
     }, { once: false });
   }
 
@@ -340,7 +355,7 @@ function renderExercise(card, body, isChallenge) {
       verdict.textContent = "⧗ compiling…";
       verdict.className = "verdict";
       check.disabled = true;
-      const res = await compileRun(harness.code.replace("//__USER__", ta.value));
+      const res = await compileRun(harness.code.replace("//__USER__", () => ta.value));
       check.disabled = false;
       if (res) {
         out.hidden = false;

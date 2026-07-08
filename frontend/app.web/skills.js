@@ -116,7 +116,8 @@ function statusOf(node, statsById, tree) {
   if (s.solved > 0 || s.attempted > 0) return "learning";
   const prereqsMet = (node.prereqs || []).every(pid => {
     const ps = statsById.get(pid);
-    return ps && ps.total > 0 && ps.pct >= 0.5;
+    // a prereq with no practiceable cards can't block (nothing to master there)
+    return !ps || ps.total === 0 || ps.pct >= 0.5;
   });
   return prereqsMet || !node.prereqs?.length ? "available" : "locked";
 }

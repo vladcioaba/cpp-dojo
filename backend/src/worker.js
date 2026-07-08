@@ -83,8 +83,15 @@ export class Leaderboard {
       const salt = randomHex(16);
       const hash = await pbkdf2(password, salt);
       const now = Date.now();
-      this.sql.exec("INSERT INTO accounts (email, nick, salt, hash, created) VALUES (?, ?, ?, ?, ?)",
-        email, nick, salt, hash, now);
+      // the exists-check and this insert straddle an await, so two concurrent
+      // registrations can both pass the check — let the PRIMARY KEY be the
+      // source of truth and turn the conflict into a clean 409, not a 500.
+      try {
+        this.sql.exec("INSERT INTO accounts (email, nick, salt, hash, created) VALUES (?, ?, ?, ?, ?)",
+          email, nick, salt, hash, now);
+      } catch {
+        return err(409, "an account with that email already exists");
+      }
       // seed / adopt the players row for this account
       this.sql.exec(
         `INSERT INTO players (token, name, xp, streak, updated) VALUES (?, ?, 0, 0, ?)
@@ -144,13 +151,14 @@ export class Leaderboard {
         if (!name) return err(400, "name required");
       }
 
-      const cur = this.sql.exec("SELECT xp FROM players WHERE token = ?", key).toArray()[0];
-      const bestXp = cur ? Math.max(cur.xp, xp) : xp; // XP only ever grows
+      const cur = this.sql.exec("SELECT xp, streak FROM players WHERE token = ?", key).toArray()[0];
+      const bestXp = cur ? Math.max(cur.xp, xp) : xp;         // XP only ever grows
+      const bestStreak = cur ? Math.max(cur.streak, streak) : streak; // don't clobber a higher streak from a fresh device
       this.sql.exec(
         `INSERT INTO players (token, name, xp, streak, updated) VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(token) DO UPDATE SET name = ?, xp = ?, streak = ?, updated = ?`,
-        key, name, bestXp, streak, Date.now(),
-        name, bestXp, streak, Date.now());
+        key, name, bestXp, bestStreak, Date.now(),
+        name, bestXp, bestStreak, Date.now());
       return json({ ok: true, xp: bestXp });
     }
 
