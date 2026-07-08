@@ -1,10 +1,10 @@
 import { Container } from "@cloudflare/containers";
 
-const COMPILER_POOL = 3; // number of container buckets; keep <= max_instances
+const COMPILER_POOL = 1; // number of container buckets; keep <= max_instances (cost cap)
 
 export class Compiler extends Container {
   defaultPort = 8080;
-  sleepAfter = "15m";
+  sleepAfter = "5m"; // stop sooner when idle → fewer billed compute-seconds
   enableInternet = false; // it compiles and runs untrusted code — keep it offline
 }
 
