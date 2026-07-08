@@ -46,6 +46,7 @@ function parseBundle(text) {
     cards.push({
       id: type + "-" + hash(head + idBody),
       type, title,
+      difficulty: meta.difficulty || "",
       tags: (meta.tags || "").split(",").map(t => t.trim()).filter(Boolean),
     });
   }
@@ -69,13 +70,28 @@ function ago(ts) {
   return Math.round(days / 30) + "mo ago";
 }
 
-let byTag = new Map(), byTitle = new Map();
+let byTag = new Map(), byTitle = new Map(), tagFreq = new Map();
+
+// a node's single most DISTINCTIVE tag (lowest frequency) — nodes list several
+// related tags (sliding-window, two-pointers, string, array…) and matching all
+// of them over-broadens; the rarest one identifies the skill cleanly.
+function primaryTag(node) {
+  const tags = node.cardTags || [];
+  if (!tags.length) return null;
+  return tags.reduce((best, t) =>
+    (tagFreq.get(t) || 0) < (tagFreq.get(best) || 1e9) ? t : best, tags[0]);
+}
+// cards that actually teach this node (by its distinctive tag), optional type filter
+function cardsForNode(node, types) {
+  const m = new Map();
+  const pt = primaryTag(node);
+  for (const c of (pt && byTag.get(pt)) || [])
+    if (!types || types.has(c.type)) m.set(c.id, c);
+  return m;
+}
 
 function nodeStats(node) {
-  // practice pool: cards whose tags intersect the node's cardTags + playable problems by title
-  const pool = new Map();
-  for (const t of (node.cardTags || []))
-    for (const c of (byTag.get(t) || [])) pool.set(c.id, c);
+  const pool = cardsForNode(node);
   for (const p of node.problems || [])
     if (p.playable && byTitle.has(p.title || p.name)) {
       const c = byTitle.get(p.title || p.name); pool.set(c.id, c);
@@ -260,17 +276,26 @@ function selectNode(nodeId) {
   document.querySelectorAll(".sk-node").forEach(g => g.classList.toggle("sel", g.dataset.node === nodeId));
   const s = nodeStats(node);
   const st = statusOf(node, new Map(tree.nodes.map(n => [n.id, nodeStats(n)])), tree);
-  const probs = (node.problems || []).map(p => {
-    const c = byTitle.get(p.title || p.name);
-    const solved = c && done[c.id] === "ok";
-    const link = p.playable && c ? `index.html?card=${encodeURIComponent(p.name)}` : null;
-    const inner = `<span class="sk-prob-diff ${p.difficulty || ""}">${(p.difficulty || "?")[0].toUpperCase()}</span>
-      ${esc(p.name)}
-      ${p.playable ? '<span class="sk-badge play">playable</span>' : '<span class="sk-badge ref">ref</span>'}
-      ${solved ? '<span class="sk-badge ok">✓</span>' : ""}`;
-    return `<li class="${solved ? "solved" : ""}">${
-      link ? `<a class="sk-prob-link" href="${link}">${inner}</a>` : inner}</li>`;
-  }).join("");
+  // every playable problem we actually have for this node — matched from the
+  // bundle by tag (auto-scales as content grows), plus the curated refs.
+  const DORD = { easy: 0, medium: 1, hard: 2, "": 3 };
+  const matched = cardsForNode(node, new Set(["challenge", "exercise"]));
+  const playable = [...matched.values()].sort((a, b) =>
+    (DORD[a.difficulty] ?? 3) - (DORD[b.difficulty] ?? 3) || a.title.localeCompare(b.title));
+  const CAP = 14;
+  const rowP = c => {
+    const solved = done[c.id] === "ok";
+    const d = c.difficulty || "";
+    return `<li class="${solved ? "solved" : ""}"><a class="sk-prob-link" href="index.html?card=${encodeURIComponent(c.title)}">
+      <span class="sk-prob-diff ${d}">${(d || "?")[0].toUpperCase()}</span>${esc(c.title)}
+      <span class="sk-badge play">playable</span>${solved ? '<span class="sk-badge ok">✓</span>' : ""}</a></li>`;
+  };
+  const shown = playable.slice(0, CAP).map(rowP).join("");
+  const moreN = Math.max(0, playable.length - CAP);
+  // curated references not in our bank (link out to practice elsewhere)
+  const refs = (node.problems || []).filter(p => !p.playable && !byTitle.has(p.name))
+    .slice(0, 6).map(p => `<li class="ref-only"><span class="sk-prob-diff ${p.difficulty || ""}">${(p.difficulty || "?")[0].toUpperCase()}</span>${esc(p.name)}<span class="sk-badge ref">ref</span></li>`).join("");
+  const probs = shown + refs;
   const practiceTags = (node.cardTags || []).join(",");
   document.getElementById("detail").innerHTML = `
     <div class="sk-detail-head">
@@ -287,8 +312,9 @@ function selectNode(nodeId) {
     ${node.prereqs?.length ? `<div class="sk-prereqs">needs: ${node.prereqs.map(id => {
       const pn = tree.nodes.find(x => x.id === id); return pn ? esc(pn.name) : id;
     }).join(", ")}</div>` : ""}
-    <div class="sk-prob-title">problems teaching this</div>
+    <div class="sk-prob-title">problems teaching this ${playable.length ? `(${playable.length} playable)` : ""}</div>
     <ul class="sk-probs">${probs || "<li>—</li>"}</ul>
+    ${moreN ? `<div class="sk-more">+${moreN} more — <a href="index.html?tags=${encodeURIComponent(practiceTags)}">see all in feed</a></div>` : ""}
     ${practiceTags ? `<a class="btn btn-check sk-practice" href="index.html?tags=${encodeURIComponent(practiceTags)}">practice this skill in feed ▸</a>` : ""}`;
 }
 
@@ -303,7 +329,11 @@ function selectNode(nodeId) {
     const cards = parseBundle(await bundleRes.text());
     for (const c of cards) {
       byTitle.set(c.title, c);
-      for (const t of c.tags) { if (!byTag.has(t)) byTag.set(t, []); byTag.get(t).push(c); }
+      for (const t of c.tags) {
+        if (!byTag.has(t)) byTag.set(t, []);
+        byTag.get(t).push(c);
+        tagFreq.set(t, (tagFreq.get(t) || 0) + 1);
+      }
     }
     if (!trees.length) throw new Error("no skill trees");
     render();
