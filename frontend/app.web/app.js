@@ -77,6 +77,7 @@ function parseCards(text, defaultType) {
       id: type + "-" + hash(head + idBody),
       type, title,
       track: meta.track || "core",
+      difficulty: meta.difficulty || "",
       tags: (meta.tags || "").split(",").map(t => t.trim()).filter(Boolean),
       hints, editorial,
       blocks: parseBlocks(body),
@@ -567,10 +568,13 @@ const _params = new URLSearchParams(location.search);
 let tagFilter = (_params.get("tags") || "").split(",").map(s => s.trim()).filter(Boolean);
 const cardFocus = _params.get("card");
 
+let difficulty = "all"; // all | easy | medium | hard
+
 function applyFilters() {
   let cards = allCards;
   if (track !== "all") cards = cards.filter(c => c.track === track);
   if (tagFilter.length) cards = cards.filter(c => c.tags.some(t => tagFilter.includes(t)));
+  if (difficulty !== "all") cards = cards.filter(c => c.difficulty === difficulty);
   if (filter === "review") {
     const due = dueIds();
     cards = cards.filter(c => due.has(c.id));
@@ -606,6 +610,29 @@ document.getElementById("chips").addEventListener("click", e => {
   tagFilter = []; // an explicit chip choice clears a skill deep-link
   applyFilters();
 });
+
+/* Difficulty: cycles any → easy → medium → hard (filters problems). */
+const DIFFS = [
+  { id: "all", label: "◇ any level" },
+  { id: "easy", label: "● easy" },
+  { id: "medium", label: "● medium" },
+  { id: "hard", label: "● hard" },
+];
+const diffBtn = document.getElementById("diffToggle");
+if (diffBtn) {
+  const paint = () => {
+    const d = DIFFS.find(x => x.id === difficulty) || DIFFS[0];
+    diffBtn.textContent = d.label;
+    diffBtn.className = "stat diff-btn" + (difficulty === "all" ? "" : " diff-" + difficulty);
+  };
+  diffBtn.onclick = () => {
+    const i = DIFFS.findIndex(x => x.id === difficulty);
+    difficulty = DIFFS[(i + 1) % DIFFS.length].id;
+    paint();
+    applyFilters();
+  };
+  paint();
+}
 
 /* Track mode: cycles the whole feed through topic tracks (all → hft → quant → fpga). */
 const modeBtn = document.getElementById("modeToggle");

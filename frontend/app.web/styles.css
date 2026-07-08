@@ -160,6 +160,19 @@ body::before {
   background: color-mix(in srgb, var(--red) 12%, transparent);
 }
 
+.diff-btn {
+  cursor: pointer;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  transition: all 0.15s;
+}
+.diff-btn:hover { color: var(--ink); border-color: var(--border-hi); }
+.diff-btn.diff-easy { color: var(--lime); border-color: color-mix(in srgb, var(--lime) 45%, var(--border)); }
+.diff-btn.diff-medium { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, var(--border)); }
+.diff-btn.diff-hard { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
+
 .stat {
   display: flex;
   align-items: center;
