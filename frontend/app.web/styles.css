@@ -114,10 +114,8 @@ body::before {
 
 .cursor {
   color: var(--lime);
-  animation: blink 1.1s steps(1) infinite;
   margin-left: 2px;
 }
-@keyframes blink { 50% { opacity: 0; } }
 
 .topnav { display: flex; gap: 4px; margin-left: 24px; margin-right: auto; }
 
