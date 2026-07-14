@@ -15,4 +15,15 @@ cp "$datasets/skills.json" "$here/app.web/offline/skills.json"
 
 echo "→ capacitor sync"
 ( cd "$here" && npx cap sync )
+
+# Capacitor CLI only auto-detects platform dirs named ios/ and android/;
+# ours are app.ios/ and app.android/, so copy the web assets + config manually.
+for native in "app.ios/App/App" "app.android/app/src/main/assets"; do
+  dest="$here/$native"
+  [ -d "$dest" ] || continue
+  echo "→ copying web assets into $native/public"
+  rm -rf "$dest/public"
+  cp -R "$here/app.web" "$dest/public"
+  cp "$here/capacitor.config.json" "$dest/capacitor.config.json"
+done
 echo "done — rebuild in Xcode / Android Studio to ship the offline snapshot"

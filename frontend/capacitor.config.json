@@ -3,7 +3,7 @@
   "appName": "cpp-dojo",
   "webDir": "app.web",
   "ios": {
-    "contentInset": "always",
+    "contentInset": "never",
     "backgroundColor": "#0a0c10"
   },
   "android": {
