@@ -211,6 +211,12 @@ body::before {
   margin: 0 auto;
   z-index: 4;
 }
+/* second row: language/topic tracks */
+.chips-tracks { padding-top: 0; }
+.chips-tracks .chip.active {
+  background: color-mix(in srgb, var(--lime) 16%, transparent);
+  border-color: var(--lime);
+}
 
 .chip {
   font-family: var(--mono);

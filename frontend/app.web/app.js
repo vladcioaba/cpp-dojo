@@ -576,15 +576,23 @@ function dailyMix(cards) {
 let allCards = [];
 let filter = "all";
 // track cycles the whole feed through topic tracks
+const CPP_TRACKS = ["core", "faang", "hft", "design"]; // everything written in C++
 const TRACKS = [
   { id: "all", label: "◆ all tracks", title: "showing all cards — tap to focus a track" },
+  { id: "cpp", label: "⚙ C++", title: "all C++ cards (core, FAANG, HFT, design)",
+    match: c => CPP_TRACKS.includes(c.track) },
+  { id: "python", label: "🐍 Python", title: "Python — runs on the backend" },
+  { id: "fpga", label: "🔧 FPGA", title: "FPGA / hardware only" },
+  { id: "quant", label: "📊 quant", title: "probability & mental-math only" },
   { id: "faang", label: "💼 FAANG", title: "LeetCode-style DS&A only" },
   { id: "hft", label: "⚡ HFT C++", title: "low-latency C++ only" },
-  { id: "quant", label: "📊 quant", title: "probability & mental-math only" },
-  { id: "fpga", label: "🔧 FPGA", title: "FPGA / hardware only" },
   { id: "design", label: "🏛 design", title: "OOP, patterns & architecture only" },
-  { id: "python", label: "🐍 Python", title: "Python — runs on the backend" },
 ];
+const trackMatch = c => {
+  if (track === "all") return true;
+  const t = TRACKS.find(x => x.id === track);
+  return t?.match ? t.match(c) : c.track === track;
+};
 let track = localStorage.getItem("cppdojo-track") || "all";
 
 /* deep-link from the skills page: ?tags=a,b filters the feed to a skill's
@@ -597,7 +605,7 @@ let difficulty = "all"; // all | easy | medium | hard
 
 function applyFilters() {
   let cards = allCards;
-  if (track !== "all") cards = cards.filter(c => c.track === track);
+  if (track !== "all") cards = cards.filter(trackMatch);
   if (tagFilter.length) cards = cards.filter(c => c.tags.some(t => tagFilter.includes(t)));
   if (difficulty !== "all") cards = cards.filter(c => c.difficulty === difficulty);
   if (filter === "review") {
@@ -630,7 +638,7 @@ function renderDeepLinkBanner() {
 document.getElementById("chips").addEventListener("click", e => {
   const chip = e.target.closest(".chip");
   if (!chip) return;
-  document.querySelectorAll(".chip").forEach(c => c.classList.toggle("active", c === chip));
+  document.querySelectorAll("#chips .chip").forEach(c => c.classList.toggle("active", c === chip));
   filter = chip.dataset.filter;
   tagFilter = []; // an explicit chip choice clears a skill deep-link
   applyFilters();
@@ -659,24 +667,40 @@ if (diffBtn) {
   paint();
 }
 
-/* Track mode: cycles the whole feed through topic tracks (all → hft → quant → fpga). */
+/* Track filter: visible chip row (language/topic) + header button that
+   cycles the same list. Both share one state and stay in sync. */
 const modeBtn = document.getElementById("modeToggle");
-if (modeBtn) {
-  const paint = () => {
-    const t = TRACKS.find(x => x.id === track) || TRACKS[0];
+const trackChips = document.getElementById("trackChips");
+
+function paintTrack() {
+  const t = TRACKS.find(x => x.id === track) || TRACKS[0];
+  if (modeBtn) {
     modeBtn.classList.toggle("on", track !== "all");
     modeBtn.textContent = t.label;
     modeBtn.title = t.title;
-  };
-  modeBtn.onclick = () => {
-    const idx = TRACKS.findIndex(x => x.id === track);
-    track = TRACKS[(idx + 1) % TRACKS.length].id;
-    localStorage.setItem("cppdojo-track", track);
-    paint();
-    applyFilters();
-  };
-  paint();
+  }
+  trackChips?.querySelectorAll(".chip").forEach(c =>
+    c.classList.toggle("active", c.dataset.track === track));
 }
+function setTrack(id) {
+  track = id;
+  localStorage.setItem("cppdojo-track", track);
+  paintTrack();
+  applyFilters();
+}
+if (trackChips) {
+  trackChips.innerHTML = TRACKS.map(t =>
+    `<button class="chip" data-track="${t.id}" title="${esc(t.title)}">${t.label}</button>`).join("");
+  trackChips.addEventListener("click", e => {
+    const chip = e.target.closest(".chip");
+    if (chip) setTrack(chip.dataset.track);
+  });
+}
+if (modeBtn) modeBtn.onclick = () => {
+  const idx = TRACKS.findIndex(x => x.id === track);
+  setTrack(TRACKS[(idx + 1) % TRACKS.length].id);
+};
+paintTrack();
 
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") return;
