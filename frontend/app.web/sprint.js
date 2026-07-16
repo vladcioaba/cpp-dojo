@@ -139,12 +139,20 @@ function runArith(diff, n) {
       <div class="sp-q" id="q"></div>
       <input class="sp-input" id="ans" inputmode="numeric" autocomplete="off" placeholder="answer">
       <div class="sp-hint">type the answer, press <kbd>Enter</kbd> — wrong answers don't advance</div>
-      <button class="btn sp-quit" id="quit">quit</button>
+      <div class="sp-row">
+        <button class="btn" id="skip" title="counts as wrong">skip ▸</button>
+        <button class="btn sp-quit" id="quit">quit</button>
+      </div>
     </section>`;
   const clock = makeClock(document.getElementById("clock"));
   const qEl = document.getElementById("q"), input = document.getElementById("ans");
   const prog = document.getElementById("prog"), fill = document.getElementById("fill");
   document.getElementById("quit").onclick = () => { clock.stop(); setup(); };
+  document.getElementById("skip").onclick = () => {   // stuck ≠ run over: skip counts as wrong
+    i++;
+    if (i >= n) { const t = clock.stop(); return arithResults(diff, n, correct, t); }
+    show();
+  };
 
   const show = () => {
     qEl.textContent = qs[i].text;

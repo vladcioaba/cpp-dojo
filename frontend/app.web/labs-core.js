@@ -114,6 +114,9 @@ window.LabsCore = (function () {
     els.codePanel.innerHTML = CPP.codeBlock(lab.cpp, true);
     document.querySelectorAll("#labTabs .chip")
       .forEach(c => c.classList.toggle("active", c.dataset.lab === lab.id));
+    // the tab strip scrolls on phones — keep the active lab visible
+    document.querySelector("#labTabs .chip.active")
+      ?.scrollIntoView({ inline: "nearest", block: "nearest" });
     active = lab;
     lab.boot({
       stage: els.stage,

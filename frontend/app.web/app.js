@@ -332,14 +332,19 @@ function renderExercise(card, body, isChallenge) {
     hintBox.className = "hints";
     hintBox.hidden = true;
     hintBtn.onclick = () => {
-      if (shownHints >= card.hints.length) return;
+      // hints exhausted → this button becomes the solution reveal (the old
+      // label said "solution below" while the solution stayed hidden)
+      if (shownHints >= card.hints.length) {
+        solWrap.hidden = false;
+        solWrap.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        return;
+      }
       hintBox.hidden = false;
       hintBox.insertAdjacentHTML("beforeend",
         `<div class="hint"><span class="hint-n">${shownHints + 1}</span>${inline(card.hints[shownHints])}</div>`);
       shownHints++;
       hintBtn.textContent = shownHints < card.hints.length
-        ? `next hint (${shownHints}/${card.hints.length})` : "solution below ↓";
-      if (shownHints >= card.hints.length) hintBtn.disabled = true;
+        ? `next hint (${shownHints}/${card.hints.length})` : "show solution ↓";
     };
   }
 

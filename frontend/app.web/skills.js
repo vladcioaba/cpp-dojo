@@ -279,6 +279,16 @@ function renderTree(tree) {
   }
   stage.innerHTML = "";
   stage.appendChild(svg);
+
+  // fit-to-width on small screens (floor the scale so labels stay readable;
+  // below the floor the stage still pans, just over less distance)
+  const natural = w + PAD * 2;
+  const avail = stage.clientWidth;
+  if (avail && avail < natural) {
+    const scale = Math.max(0.55, avail / natural);
+    svg.setAttribute("width", Math.round(natural * scale));
+    svg.setAttribute("height", Math.round((h + PAD * 2) * scale));
+  }
 }
 
 function selectNode(nodeId) {

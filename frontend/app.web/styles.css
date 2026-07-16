@@ -836,6 +836,10 @@ kbd {
 
   .card-body { padding: 18px 16px 20px; }
 
+  /* thumb-sized filter chips (were ~24px tall) + a scroll cue */
+  .chip { padding: 10px 16px; font-size: 13px; }
+  .chips { -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent); }
+
   /* header nav hidden on mobile — replaced by the real bottom bar below */
   .topnav { display: none; }
   .topbar { padding-left: 14px; padding-right: 8px; }
