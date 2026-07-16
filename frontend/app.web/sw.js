@@ -3,7 +3,7 @@
    - content .md    : network-first, cache fallback (works offline, updates live)
    - everything else: cache-first shell (instant loads, installable) */
 
-const VERSION = "v21";
+const VERSION = "v22";
 const SHELL = "shell-" + VERSION;
 const RUNTIME = "runtime-" + VERSION;
 

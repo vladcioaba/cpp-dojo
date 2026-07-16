@@ -1,7 +1,7 @@
 {
-  "name": "cpp-dojo",
-  "short_name": "cpp-dojo",
-  "description": "Daily C++ grind \u2014 facts, quizzes, write-the-code drills, data-structure labs.",
+  "name": "cpp-grandfather",
+  "short_name": "cpp-grandfather",
+  "description": "From zero to grandfather in C++ \u2014 daily drills, quizzes, labs, interview prep.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
