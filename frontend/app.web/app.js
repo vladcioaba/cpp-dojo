@@ -264,7 +264,8 @@ function renderQuiz(card, body, isReview) {
         });
         if (!opt.right) btn.classList.add("wrong");
         award(card.id, opt.right ? "ok" : "fail", opt.right ? XP.quizRight : XP.quizWrong, btn);
-        if (quote) wrap.insertAdjacentHTML("afterend", `<div class="explain">${inline(quote.text)}</div>`);
+        if (quote) wrap.insertAdjacentHTML("afterend",
+          `<div class="explain" role="status">${(opt.right ? "correct. " : "not quite. ") + inline(quote.text)}</div>`);
         markDone(card.id);
       };
     }
@@ -353,6 +354,7 @@ function renderExercise(card, body, isChallenge) {
   reveal.textContent = "show solution";
   const verdict = document.createElement("span");
   verdict.className = "verdict";
+  verdict.setAttribute("aria-live", "polite");  // announce pass/fail to screen readers
   actions.append(check);
   if (hintBtn) actions.append(hintBtn);
   actions.append(reveal, verdict);
@@ -360,6 +362,7 @@ function renderExercise(card, body, isChallenge) {
 
   const out = document.createElement("pre");
   out.className = "compile-out";
+  out.setAttribute("aria-live", "polite");
   out.hidden = true;
 
   const solWrap = document.createElement("div");
@@ -672,7 +675,10 @@ function renderDeepLinkBanner() {
 document.getElementById("chips").addEventListener("click", e => {
   const chip = e.target.closest(".chip");
   if (!chip) return;
-  document.querySelectorAll("#chips .chip").forEach(c => c.classList.toggle("active", c === chip));
+  document.querySelectorAll("#chips .chip").forEach(c => {
+    c.classList.toggle("active", c === chip);
+    c.setAttribute("aria-pressed", c === chip);
+  });
   filter = chip.dataset.filter;
   tagFilter = []; // an explicit chip choice clears a skill deep-link
   applyFilters();
@@ -691,6 +697,7 @@ if (diffBtn) {
     const d = DIFFS.find(x => x.id === difficulty) || DIFFS[0];
     diffBtn.textContent = d.label;
     diffBtn.className = "stat diff-btn" + (difficulty === "all" ? "" : " diff-" + difficulty);
+    diffBtn.setAttribute("aria-pressed", difficulty !== "all");
   };
   diffBtn.onclick = () => {
     const i = DIFFS.findIndex(x => x.id === difficulty);
@@ -710,11 +717,14 @@ function paintTrack() {
   const t = TRACKS.find(x => x.id === track) || TRACKS[0];
   if (modeBtn) {
     modeBtn.classList.toggle("on", track !== "all");
+    modeBtn.setAttribute("aria-pressed", track !== "all");
     modeBtn.textContent = t.label;
     modeBtn.title = t.title;
   }
-  trackChips?.querySelectorAll(".chip").forEach(c =>
-    c.classList.toggle("active", c.dataset.track === track));
+  trackChips?.querySelectorAll(".chip").forEach(c => {
+    c.classList.toggle("active", c.dataset.track === track);
+    c.setAttribute("aria-pressed", c.dataset.track === track);
+  });
 }
 function setTrack(id) {
   track = id;

@@ -59,6 +59,23 @@
 /* the hidden attribute must win over author display rules (e.g. flex) */
 [hidden] { display: none !important; }
 
+/* one visible focus style everywhere — inputs elsewhere strip outlines */
+:focus-visible {
+  outline: 2px solid var(--lime) !important;
+  outline-offset: 2px;
+}
+
+/* vestibular safety: kill decorative motion when the OS asks */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .card { opacity: 1; transform: none; }
+}
+
 html { height: 100%; }
 
 body {

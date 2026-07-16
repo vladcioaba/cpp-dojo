@@ -234,6 +234,8 @@ function renderTree(tree) {
   const PAD = 20;
   const NS = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("role", "group");
+  svg.setAttribute("aria-label", `${tree.name} skill tree — ${tree.nodes.length} skills`);
   svg.setAttribute("viewBox", `${-PAD} ${-PAD} ${w + PAD * 2} ${h + PAD * 2}`);
   svg.setAttribute("width", w + PAD * 2);
   svg.setAttribute("height", h + PAD * 2);
@@ -275,6 +277,14 @@ function renderTree(tree) {
       : s.total ? `${s.solved}/${s.total} · ${ago(s.last)}` : "not started";
     g.appendChild(t2);
     g.onclick = () => selectNode(n.id);
+    // keyboard + screen-reader access: SVG <g> is mouse-only by default
+    g.setAttribute("tabindex", "0");
+    g.setAttribute("role", "button");
+    g.setAttribute("aria-label",
+      `${n.name} — ${st}${s.total ? `, ${s.solved} of ${s.total} solved` : ""}`);
+    g.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectNode(n.id); }
+    });
     svg.appendChild(g);
   }
   stage.innerHTML = "";

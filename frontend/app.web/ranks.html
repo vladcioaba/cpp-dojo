@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>cpp-dojo — ranks</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#0a0c10">
+<meta name="theme-color" content="#0a0c10" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f2efe7" media="(prefers-color-scheme: light)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="cpp-dojo">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
@@ -15,6 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 <script src="theme.js"></script>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
 
@@ -22,13 +24,13 @@
   <div class="logo">
     <span class="logo-path">~/cpp-dojo/ranks</span><span class="cursor">█</span>
   </div>
-  <nav class="topnav">
+  <nav class="topnav" aria-label="pages">
     <a class="nav-link" href="today.html">today</a>
     <a class="nav-link" href="index.html">feed</a>
     <a class="nav-link" href="skills.html">skills</a>
     <a class="nav-link" href="labs.html">labs</a>
     <a class="nav-link" href="sprint.html">sprint</a>
-    <a class="nav-link active" href="ranks.html">ranks</a>
+    <a class="nav-link active" aria-current="page" href="ranks.html">ranks</a>
   </nav>
   <div class="stats">
     <button class="stat theme-btn" id="themeToggle" title="day / night">☀</button>
@@ -49,9 +51,9 @@
           <button class="lb-tab" data-mode="register">sign up</button>
         </div>
         <form class="lb-form" id="lbForm" autocomplete="on">
-          <input type="text" id="fNick" maxlength="20" placeholder="nickname" spellcheck="false" autocomplete="nickname" hidden>
-          <input type="email" id="fEmail" maxlength="120" placeholder="email" autocomplete="email" required>
-          <input type="password" id="fPass" placeholder="password (min 8)" autocomplete="current-password" required>
+          <input type="text" id="fNick" aria-label="nickname" maxlength="20" placeholder="nickname" spellcheck="false" autocomplete="nickname" hidden>
+          <input type="email" id="fEmail" aria-label="email" maxlength="120" placeholder="email" autocomplete="email" required>
+          <input type="password" id="fPass" aria-label="password" placeholder="password (min 8)" autocomplete="current-password" required>
           <button class="btn btn-check" id="fSubmit" type="submit">log in ▸</button>
           <span class="lb-msg" id="fMsg"></span>
         </form>

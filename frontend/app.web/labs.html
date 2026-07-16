@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>cpp-dojo — labs</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#0a0c10">
+<meta name="theme-color" content="#0a0c10" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f2efe7" media="(prefers-color-scheme: light)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="cpp-dojo">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
@@ -16,6 +17,7 @@
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="labs.css">
 <script src="theme.js"></script>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
 
@@ -23,11 +25,11 @@
   <div class="logo">
     <span class="logo-path">~/cpp-dojo/labs</span><span class="cursor">█</span>
   </div>
-  <nav class="topnav">
+  <nav class="topnav" aria-label="pages">
     <a class="nav-link" href="today.html">today</a>
     <a class="nav-link" href="index.html">feed</a>
     <a class="nav-link" href="skills.html">skills</a>
-    <a class="nav-link active" href="labs.html">labs</a>
+    <a class="nav-link active" aria-current="page" href="labs.html">labs</a>
     <a class="nav-link" href="sprint.html">sprint</a>
     <a class="nav-link" href="ranks.html">ranks</a>
   </nav>
@@ -36,7 +38,7 @@
   </div>
 </header>
 
-<nav class="chips" id="labTabs"></nav>
+<nav class="chips" id="labTabs" aria-label="labs"></nav>
 
 <main class="lab-grid">
   <section class="lab-stage-wrap">
