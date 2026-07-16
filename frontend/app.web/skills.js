@@ -41,12 +41,13 @@ function parseBundle(text) {
     if (!m) continue;
     const type = m[1], title = m[2].trim();
     const meta = {};
-    body = body.replace(/^(tags|source|difficulty|track):\s*(.+)$/gm, (_, k, v) => { meta[k] = v.trim(); return ""; });
+    body = body.replace(/^(tags|source|difficulty|track|lang):\s*(.+)$/gm, (_, k, v) => { meta[k] = v.trim(); return ""; });
     body = body.replace(/^hint:\s*(.+)$/gm, "").replace(/\n?\*\*Editorial:\*\*\s*([\s\S]*)$/m, "");
     const idBody = body.replace(/\n{3,}/g, "\n\n");   // must match app.js id recipe
     cards.push({
       id: type + "-" + hash(head + idBody),
       type, title,
+      track: meta.track || "core",
       difficulty: meta.difficulty || "",
       tags: (meta.tags || "").split(",").map(t => t.trim()).filter(Boolean),
     });
@@ -82,12 +83,21 @@ function primaryTag(node) {
   return tags.reduce((best, t) =>
     (tagFreq.get(t) || 0) < (tagFreq.get(best) || 1e9) ? t : best, tags[0]);
 }
-// cards that actually teach this node (by its distinctive tag), optional type filter
+// cards that actually teach this node (by its distinctive tag), optional type
+// filter; a node with a track (e.g. python) only counts cards of that track,
+// since generic tags like "array" span languages
 function cardsForNode(node, types) {
   const m = new Map();
-  const pt = primaryTag(node);
-  for (const c of (pt && byTag.get(pt)) || [])
-    if (!types || types.has(c.type)) m.set(c.id, c);
+  // tracked nodes (python) match ALL their tags — the track filter already
+  // bounds the pool; untracked nodes use the rarest tag to avoid matching
+  // half the bank via generic tags like "array"
+  const tags = node.track ? (node.cardTags || []) : [primaryTag(node)].filter(Boolean);
+  for (const t of tags)
+    for (const c of byTag.get(t) || []) {
+      if (node.track && c.track !== node.track) continue;
+      if (!node.track && c.track === "python") continue; // C++ trees skip python cards
+      if (!types || types.has(c.type)) m.set(c.id, c);
+    }
   return m;
 }
 

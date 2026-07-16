@@ -126,7 +126,7 @@ export class Leaderboard {
 
     /* ── me (validate session) ────────────────────────────────── */
     if (p === "/api/me" && request.method === "GET") {
-      const email = this.session(url.searchParams.get("token"));
+      const email = this.session(bearer(request) || url.searchParams.get("token"));
       if (!email) return err(401, "not logged in");
       return json({ profile: this.profile(email) });
     }
@@ -152,6 +152,9 @@ export class Leaderboard {
       }
 
       const cur = this.sql.exec("SELECT xp, streak FROM players WHERE token = ?", key).toArray()[0];
+      // an unknown anonymous token claiming a big total is a spoof, not a
+      // player — real anon progress syncs early and often. Accounts exempt.
+      if (!cur && !email && xp > 5000) return err(400, "sign in to sync that much xp");
       const bestXp = cur ? Math.max(cur.xp, xp) : xp;         // XP only ever grows
       const bestStreak = cur ? Math.max(cur.streak, streak) : streak; // don't clobber a higher streak from a fresh device
       this.sql.exec(
@@ -168,7 +171,9 @@ export class Leaderboard {
         "SELECT name, xp, streak FROM players ORDER BY xp DESC, updated ASC LIMIT 50"
       ).toArray();
       let you = null;
-      const email = this.session(url.searchParams.get("session"));
+      // session prefers the Authorization header — tokens in query strings
+      // end up in edge logs; query params kept for older bundled clients
+      const email = this.session(bearer(request) || url.searchParams.get("session"));
       const key = email ? this.playerKey(email) : (url.searchParams.get("token") || "");
       if (email || /^[0-9a-f-]{36}$/.test(key)) {
         const me = this.sql.exec("SELECT name, xp, streak FROM players WHERE token = ?", key).toArray()[0];
@@ -217,6 +222,13 @@ function json(obj, status = 200) {
   });
 }
 function err(status, message) { return json({ error: message }, status); }
+
+/* session token from "Authorization: Bearer <hex>" */
+function bearer(request) {
+  const h = request.headers.get("Authorization") || "";
+  const m = h.match(/^Bearer ([0-9a-f]{64})$/);
+  return m ? m[1] : null;
+}
 
 export default {
   async fetch(request, env) {
@@ -287,6 +299,18 @@ export default {
           const { success } = await limiter.limit({ key: "auth:" + ip });
           if (!success) {
             return Response.json({ error: "too many attempts — wait a moment" },
+              { status: 429, headers: { "Retry-After": "10" } });
+          }
+        } catch { /* limiter unavailable — proceed */ }
+      }
+      // score/leaderboard were unthrottled: a loop could spam rows into the
+      // DO or hammer reads. Same per-IP budget as compiles.
+      if (url.pathname === "/api/score" || url.pathname === "/api/leaderboard") {
+        const ip = request.headers.get("CF-Connecting-IP") || "anon";
+        try {
+          const { success } = await env.RUN_LIMIT.limit({ key: "board:" + ip });
+          if (!success) {
+            return Response.json({ error: "slow down" },
               { status: 429, headers: { "Retry-After": "10" } });
           }
         } catch { /* limiter unavailable — proceed */ }

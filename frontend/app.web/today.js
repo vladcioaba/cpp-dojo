@@ -23,10 +23,10 @@ function parseBundle(text) {
   for (const sec of text.split(/^## /m).slice(1)) {
     const nl = sec.indexOf("\n"); const head = sec.slice(0, nl).trim(); let body = sec.slice(nl + 1);
     const m = head.match(/^(\w+):\s*(.*)$/); if (!m) continue;
-    const meta = {}; body = body.replace(/^(tags|source|difficulty|track):\s*(.+)$/gm, (_, k, v) => { meta[k] = v.trim(); return ""; });
+    const meta = {}; body = body.replace(/^(tags|source|difficulty|track|lang):\s*(.+)$/gm, (_, k, v) => { meta[k] = v.trim(); return ""; });
     body = body.replace(/^hint:\s*(.+)$/gm, "").replace(/\n?\*\*Editorial:\*\*\s*([\s\S]*)$/m, "");
     const idBody = body.replace(/\n{3,}/g, "\n\n");   // must match app.js id recipe
-    cards.push({ id: m[1] + "-" + hash(head + idBody), type: m[1], title: m[2].trim(),
+    cards.push({ id: m[1] + "-" + hash(head + idBody), type: m[1], title: m[2].trim(), track: meta.track || "core",
       tags: (meta.tags || "").split(",").map(t => t.trim()).filter(Boolean) });
   }
   return cards;
@@ -54,8 +54,13 @@ function primaryTag(node) {
 }
 function nodeStats(node) {
   const pool = new Map();
-  const pt = primaryTag(node);
-  for (const c of (pt && byTag.get(pt)) || []) pool.set(c.id, c);
+  const tags = node.track ? (node.cardTags || []) : [primaryTag(node)].filter(Boolean);
+  for (const t of tags)
+    for (const c of byTag.get(t) || []) {
+      if (node.track && c.track !== node.track) continue;
+      if (!node.track && c.track === "python") continue;
+      pool.set(c.id, c);
+    }
   for (const p of node.problems || []) if (p.playable && byTitle.has(p.name)) { const c = byTitle.get(p.name); pool.set(c.id, c); }
   const ids = [...pool.keys()];
   const solved = ids.filter(id => done[id] === "ok").length;

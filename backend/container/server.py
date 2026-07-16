@@ -51,6 +51,12 @@ def run_preexec():
     # amd64 binaries under local Rosetta emulation.
     resource.setrlimit(resource.RLIMIT_CPU, (RUN_TIMEOUT, RUN_TIMEOUT))
     resource.setrlimit(resource.RLIMIT_FSIZE, (10 << 20, 10 << 20))
+    # RLIMIT_DATA caps the heap without the Rosetta breakage RLIMIT_AS causes
+    # (mmap reservations don't count against DATA) — bounds alloc bombs.
+    try:
+        resource.setrlimit(resource.RLIMIT_DATA, (512 << 20, 512 << 20))
+    except (ValueError, OSError):
+        pass
     os.setgid(RUNNER)
     os.setuid(RUNNER)
     os.setsid()                     # own process group; we still reap by uid
@@ -84,22 +90,46 @@ def clip(s):
     return s[:MAX_OUT]
 
 
+def _drain_capped(stream, sink):
+    """Read a pipe to EOF, keeping only the first MAX_OUT chars. Draining
+    past the cap keeps the child from blocking on a full pipe, without
+    buffering unbounded output in this (root) process."""
+    kept = 0
+    while True:
+        chunk = stream.read(8192)
+        if not chunk:
+            return
+        if kept < MAX_OUT:
+            take = chunk[:MAX_OUT - kept]
+            sink.append(take)
+            kept += len(take)
+
+
 def _run(argv, tmp, env):
     """Run argv as the unprivileged RUNNER (sandboxed, reaped, output-capped)."""
     p = subprocess.Popen(
         ["/bin/sh", "-c", RUN_WRAPPER, "run"] + argv, stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         cwd=tmp, env=env, preexec_fn=run_preexec)
+    out_buf, err_buf = [], []
+    readers = [threading.Thread(target=_drain_capped, args=(p.stdout, out_buf), daemon=True),
+               threading.Thread(target=_drain_capped, args=(p.stderr, err_buf), daemon=True)]
+    for t in readers:
+        t.start()
     try:
-        out, errtext = p.communicate(timeout=RUN_TIMEOUT)
-        return {"stdout": clip(out), "stderr": clip(errtext), "exit": p.returncode}
-    except subprocess.TimeoutExpired:
-        reap(RUNNER)
         try:
-            out, errtext = p.communicate(timeout=2)
+            p.wait(timeout=RUN_TIMEOUT)
+            timed_out = False
         except subprocess.TimeoutExpired:
-            out, errtext = "", ""
-        return {"stdout": clip(out or ""), "stderr": "timed out after %ss" % RUN_TIMEOUT, "exit": -1}
+            timed_out = True
+        if timed_out:
+            reap(RUNNER)            # kill writers so the readers hit EOF
+        for t in readers:
+            t.join(timeout=2)
+        out, errtext = "".join(out_buf), "".join(err_buf)
+        if timed_out:
+            return {"stdout": out, "stderr": "timed out after %ss" % RUN_TIMEOUT, "exit": -1}
+        return {"stdout": out, "stderr": errtext, "exit": p.returncode}
     finally:
         reap(RUNNER)
 

@@ -112,9 +112,12 @@ async function render() {
     el("meStats").textContent = `${a.profile.email} · ${a.profile.xp} xp`;
   }
 
-  const q = a ? `?session=${a.session}` : (legacy() ? `?token=${legacy().token}` : "");
+  // session goes in a header (never the URL — query strings land in logs);
+  // the anonymous token is a low-value pseudonym and may stay a query param
+  const q = !a && legacy() ? `?token=${legacy().token}` : "";
+  const hdrs = a ? { headers: { Authorization: "Bearer " + a.session } } : {};
   let data;
-  try { data = await (await fetch(API + "/api/leaderboard" + q)).json(); }
+  try { data = await (await fetch(API + "/api/leaderboard" + q, hdrs)).json(); }
   catch {
     el("lbEmpty").hidden = false;
     el("lbEmpty").textContent = "leaderboard unreachable — offline?";
@@ -158,7 +161,7 @@ setMode("login");
   if (a) {
     // validate session; refresh profile or drop it if expired
     try {
-      const r = await fetch(API + "/api/me?token=" + a.session);
+      const r = await fetch(API + "/api/me", { headers: { Authorization: "Bearer " + a.session } });
       if (r.ok) { a.profile = (await r.json()).profile; setAuth(a); }
       else if (r.status === 401) setAuth(null);
     } catch { /* offline — keep cached */ }
