@@ -191,6 +191,13 @@ export class Leaderboard {
   async newSession(email) {
     const token = randomHex(32);
     this.sql.exec("INSERT INTO sessions (token, email, created) VALUES (?, ?, ?)", token, email, Date.now());
+    // housekeeping: expiry is otherwise lazy, so cull dead rows and cap live
+    // sessions per account (keep the 5 newest) so the table can't grow forever
+    this.sql.exec("DELETE FROM sessions WHERE created < ?", Date.now() - SESSION_TTL);
+    this.sql.exec(
+      `DELETE FROM sessions WHERE email = ? AND token NOT IN
+         (SELECT token FROM sessions WHERE email = ? ORDER BY created DESC LIMIT 5)`,
+      email, email);
     return token;
   }
 }
