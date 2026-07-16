@@ -74,13 +74,18 @@
 }
 @media (max-width: 860px) { .sk-tree-wrap { grid-template-columns: 1fr; } }
 
+/* the tree grows to its full height — the page scrolls through it like a
+   subway map spanning multiple screens (no inner scroll box) */
 .sk-tree {
   background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
-  overflow: auto; min-height: 360px; padding: 8px;
+  overflow: visible; min-height: 360px; padding: 8px;
 }
-.sk-tree svg { display: block; }
+.sk-tree svg { display: block; margin: 0 auto; }
 
-.sk-edge { fill: none; stroke: var(--border-hi); stroke-width: 1.5; opacity: .6; }
+.sk-edge { fill: none; stroke: var(--border-hi); stroke-width: 3; opacity: .55; stroke-linecap: round; }
+.sk-edge.mastered { stroke: var(--lime); opacity: .5; }
+.sk-edge.learning { stroke: var(--amber); opacity: .5; }
+.sk-edge.available { stroke: var(--blue); opacity: .45; }
 
 .sk-node { cursor: pointer; }
 .sk-node rect { fill: var(--panel-2); stroke: var(--border-hi); stroke-width: 1.5; transition: stroke .15s; }
@@ -100,7 +105,10 @@
 .sk-detail {
   background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
   padding: 18px; overflow-y: auto; min-height: 0;
+  /* stays alongside while the page scrolls the tall tree */
+  position: sticky; top: 12px; max-height: calc(100vh - 120px); align-self: start;
 }
+@media (max-width: 860px) { .sk-detail { position: static; max-height: none; } }
 .sk-detail-empty { font-family: var(--mono); font-size: 13px; color: var(--faint); line-height: 1.7; }
 .sk-detail-head { display: flex; align-items: center; gap: 10px; }
 .sk-detail-head h2 { font-family: var(--disp); font-size: 20px; font-weight: 700; }

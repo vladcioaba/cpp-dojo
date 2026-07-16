@@ -134,18 +134,29 @@ function statusOf(node, statsById, tree) {
 }
 
 /* ── tree layout (layered by tier) ───────────────────────────── */
-function layout(tree) {
+/* vertical subway-map layout: tiers are horizontal bands flowing downward,
+   nodes are stations, prereq edges run down between bands */
+function layout(tree, availW = 680) {
   const tiers = {};
   for (const n of tree.nodes) (tiers[n.tier] ??= []).push(n);
-  const COLW = 210, ROWH = 92, NW = 176, NH = 60;
+  const NW = 160, NH = 56, GX = 18, GY = 22, TIER_GAP = 48;
+  const perRow = Math.max(1, Math.floor((availW + GX) / (NW + GX)));
+  const w = Math.max(NW, perRow * (NW + GX) - GX);
   const pos = {};
+  let y = 0;
   const tierKeys = Object.keys(tiers).map(Number).sort((a, b) => a - b);
-  let maxRows = 0;
-  tierKeys.forEach((tk, ti) => {
-    tiers[tk].forEach((n, ri) => { pos[n.id] = { x: ti * COLW, y: ri * ROWH }; });
-    maxRows = Math.max(maxRows, tiers[tk].length);
-  });
-  return { pos, w: tierKeys.length * COLW, h: maxRows * ROWH, NW, NH };
+  for (const tk of tierKeys) {
+    const nodes = tiers[tk];
+    for (let i = 0; i < nodes.length; i += perRow) {
+      const row = nodes.slice(i, i + perRow);
+      const rowW = row.length * (NW + GX) - GX;
+      const x0 = (w - rowW) / 2;
+      row.forEach((n, j) => { pos[n.id] = { x: x0 + j * (NW + GX), y }; });
+      y += NH + GY;
+    }
+    y += TIER_GAP - GY;
+  }
+  return { pos, w, h: y - TIER_GAP + NH - GY + GY, NW, NH };
 }
 
 /* ── render ──────────────────────────────────────────────────── */
@@ -229,7 +240,8 @@ function render() {
 
 function renderTree(tree) {
   const stage = document.getElementById("treeStage");
-  const { pos, w, h, NW, NH } = layout(tree);
+  const availW = Math.max(300, (stage.clientWidth || 680) - 8);
+  const { pos, w, h, NW, NH } = layout(tree, availW);
   const sById = new Map(tree.nodes.map(n => [n.id, nodeStats(n)]));
   const PAD = 20;
   const NS = "http://www.w3.org/2000/svg";
@@ -240,16 +252,18 @@ function renderTree(tree) {
   svg.setAttribute("width", w + PAD * 2);
   svg.setAttribute("height", h + PAD * 2);
 
-  // edges
+  // edges — subway lines running downward, colored by the prereq's status
   for (const n of tree.nodes)
     for (const pid of n.prereqs || []) {
       if (!pos[pid]) continue;
       const a = pos[pid], b = pos[n.id];
+      const parent = tree.nodes.find(x => x.id === pid);
+      const pst = parent ? statusOf(parent, sById, tree) : "";
       const line = document.createElementNS(NS, "path");
-      const x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2;
-      const mx = (x1 + x2) / 2;
-      line.setAttribute("d", `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`);
-      line.setAttribute("class", "sk-edge");
+      const x1 = a.x + NW / 2, y1 = a.y + NH, x2 = b.x + NW / 2, y2 = b.y;
+      const my = (y1 + y2) / 2;
+      line.setAttribute("d", `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`);
+      line.setAttribute("class", "sk-edge " + pst);
       svg.appendChild(line);
     }
   // nodes
@@ -306,6 +320,9 @@ function selectNode(nodeId) {
   const node = tree.nodes.find(n => n.id === nodeId);
   if (!node) return;
   document.querySelectorAll(".sk-node").forEach(g => g.classList.toggle("sel", g.dataset.node === nodeId));
+  // single-column (phone): the detail lives below a multi-screen tree — jump to it
+  if (window.matchMedia("(max-width: 860px)").matches)
+    setTimeout(() => document.querySelector(".sk-detail")?.scrollIntoView({ block: "start", behavior: "smooth" }), 50);
   const s = nodeStats(node);
   const st = statusOf(node, new Map(tree.nodes.map(n => [n.id, nodeStats(n)])), tree);
   // every playable problem we actually have for this node — matched from the
