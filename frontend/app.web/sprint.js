@@ -21,14 +21,20 @@ const TRACK_MATCH = {
   mock: () => true,
 };
 let _bundle = null;
-async function loadQuizzes() {
+async function loadContent() {
   if (_bundle) return _bundle;
   for (const url of BUNDLE_SOURCES) {
-    try { const r = await fetch(url); if (r.ok) { _bundle = parseQuizzes(await r.text()); return _bundle; } }
-    catch { /* next */ }
+    try {
+      const r = await fetch(url);
+      if (r.ok) {
+        const text = await r.text();
+        return (_bundle = { quizzes: parseQuizzes(text), challenges: parseChallenges(text) });
+      }
+    } catch { /* next */ }
   }
-  return (_bundle = []);
+  return (_bundle = { quizzes: [], challenges: [] });
 }
+async function loadQuizzes() { return (await loadContent()).quizzes; }
 
 /* ── best-score store ────────────────────────────────────────── */
 function bests() {
@@ -63,6 +69,20 @@ function setup() {
       </div>
 
       <div class="sp-group">
+        <div class="sp-group-head">🎙 mock interview ${bestLine("interview")}</div>
+        <p class="sp-sub">Three real problems — easy, medium, hard — against a countdown. Code compiles and runs on the backend; PASS advances.</p>
+        <div class="sp-opts" id="ivOpts">
+          <button class="sp-opt active" data-iv="cpp">⚙ C++</button>
+          <button class="sp-opt" data-iv="python">🐍 Python</button>
+          <button class="sp-opt" data-iv="hft">⚡ HFT</button>
+        </div>
+        <div class="sp-row">
+          <label>clock <select id="ivMin"><option>30</option><option selected>45</option><option>60</option></select> min</label>
+          <button class="btn btn-check" id="startIv">start interview ▸</button>
+        </div>
+      </div>
+
+      <div class="sp-group">
         <div class="sp-group-head">📝 quiz round ${bestLine("quiz:mock")}</div>
         <div class="sp-opts" id="trackOpts">
           <button class="sp-opt active" data-track="mock">🎯 mock (mixed)</button>
@@ -81,6 +101,12 @@ function setup() {
 
   wireOpts("arithOpts");
   wireOpts("trackOpts");
+  wireOpts("ivOpts");
+  document.getElementById("startIv").onclick = () => {
+    const pool = document.querySelector("#ivOpts .sp-opt.active").dataset.iv;
+    const mins = +document.getElementById("ivMin").value;
+    runInterview(pool, mins);
+  };
   document.getElementById("startArith").onclick = () => {
     const diff = document.querySelector("#arithOpts .sp-opt.active").dataset.diff;
     const n = +document.getElementById("arithN").value;
@@ -218,6 +244,33 @@ function parseQuizzes(text) {
   return out;
 }
 
+/* challenges with a harness — the raw material for interview mode */
+function parseChallenges(text) {
+  const out = [];
+  for (const sec of text.split(/^## challenge:/m).slice(1)) {
+    const nl = sec.indexOf("\n");
+    const title = sec.slice(0, nl).trim();
+    let body = sec.slice(nl + 1);
+    const track = (body.match(/^track:\s*(\S+)/m) || [])[1] || "core";
+    const lang = (body.match(/^lang:\s*(\S+)/m) || [])[1] === "python" ? "python" : "cpp";
+    const difficulty = (body.match(/^difficulty:\s*(\S+)/m) || [])[1] || "";
+    body = body.replace(/^(tags|track|source|difficulty|lang|hint):.*$/gm, "")
+               .replace(/\n?\*\*Editorial:\*\*[\s\S]*$/m, "");
+    const fence = lang === "python" ? "python" : "cpp";
+    const blocks = [...body.matchAll(new RegExp("```" + fence + "\\n([\\s\\S]*?)```", "g"))].map(m => m[1]);
+    const starter = blocks.find(b => /^\s*(\/\/|#)\s*starter\b/.test(b));
+    const harness = blocks.find(b => /^\s*(\/\/|#)\s*harness\b/.test(b));
+    const statement = body.split("```")[0].trim();
+    if (!harness) continue;
+    out.push({
+      title, track, lang, difficulty, statement,
+      starter: starter ? starter.replace(/^\s*(\/\/|#)\s*starter[^\n]*\n/, "") : "",
+      harness: harness.replace(/^\s*(\/\/|#)\s*harness[^\n]*\n/, ""),
+    });
+  }
+  return out;
+}
+
 function shuffle(a) {
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -315,6 +368,124 @@ async function runQuiz(track, n) {
   }
 
   render();
+}
+
+/* ── mock interview: 3 problems vs a countdown, compile-verified ─ */
+
+const IV_POOLS = {
+  cpp: c => c.lang === "cpp" && ["core", "faang", "design"].includes(c.track),
+  python: c => c.lang === "python",
+  hft: c => c.track === "hft",
+};
+
+async function runInterview(pool, mins) {
+  root.innerHTML = `<section class="sp-card"><p class="sp-sub">picking problems…</p></section>`;
+  const all = (await loadContent()).challenges.filter(IV_POOLS[pool] || (() => true));
+  const pick = d => shuffle(all.filter(c => c.difficulty === d))[0];
+  const probs = [pick("easy"), pick("medium"), pick("hard")].filter(Boolean);
+  while (probs.length < 3 && all.length > probs.length) {
+    const extra = shuffle(all).find(c => !probs.includes(c));
+    if (!extra) break; probs.push(extra);
+  }
+  if (!probs.length) { root.innerHTML = `<section class="sp-card"><p class="sp-sub">no problems available — check your connection</p></section>`; return setTimeout(setup, 1500); }
+
+  const deadline = performance.now() + mins * 60_000;
+  let i = 0, solved = 0, over = false;
+  const results = [];
+
+  const finish = () => {
+    over = true;
+    clearInterval(clockTick);
+    const spent = Math.min(mins * 60_000, performance.now() - t0) / 1000;
+    const label = `${solved}/${probs.length} in ${Math.floor(spent / 60)}m${Math.round(spent % 60)}s`;
+    const prev = bests().interview;
+    if (!prev || solved > prev.solved) saveBest("interview", { solved, label });
+    root.innerHTML = `
+      <section class="sp-card">
+        <h1 class="sp-title">${solved === probs.length ? "hired ✓" : "time"}</h1>
+        <p class="sp-sub">${label} — ${pool} interview</p>
+        <ul class="sp-summary">${results.map(r =>
+          `<li>${r.ok ? "✓" : "✗"} ${esc(r.title)} <span>(${esc(r.difficulty)})${r.ok ? " · " + r.secs + "s" : ""}</span></li>`).join("")}</ul>
+        <div class="sp-row">
+          <button class="btn btn-check" id="again">again ▸</button>
+          <button class="btn" id="home">back</button>
+        </div>
+      </section>`;
+    document.getElementById("again").onclick = () => runInterview(pool, mins);
+    document.getElementById("home").onclick = setup;
+  };
+
+  const t0 = performance.now();
+  let clockTick = null;
+
+  const show = () => {
+    if (i >= probs.length) return finish();
+    const c = probs[i];
+    const pStart = performance.now();
+    root.innerHTML = `
+      <section class="sp-card sp-run sp-iv">
+        <div class="sp-bar">
+          <span id="prog">problem ${i + 1}/${probs.length} · ${esc(c.difficulty)}</span>
+          <span class="sp-clock" id="clock"></span>
+        </div>
+        <h2 class="sp-iv-title">${esc(c.title)}</h2>
+        <div class="sp-iv-statement">${inline(esc(c.statement)).replace(/\n\n/g, "<br><br>")}</div>
+        <textarea class="editor sp-iv-editor" id="code" spellcheck="false" autocapitalize="none" autocorrect="off" autocomplete="off"></textarea>
+        <div class="sp-row">
+          <button class="btn btn-check" id="run">run ▸</button>
+          <span class="verdict" id="verdict" aria-live="polite"></span>
+          <button class="btn" id="skipIv" title="counts as unsolved">skip ▸</button>
+          <button class="btn sp-quit" id="quitIv">end interview</button>
+        </div>
+        <pre class="compile-out" id="out" hidden aria-live="polite"></pre>
+      </section>`;
+    const code = document.getElementById("code");
+    code.value = c.starter || "";
+    const verdict = document.getElementById("verdict"), out = document.getElementById("out");
+
+    clearInterval(clockTick);
+    clockTick = setInterval(() => {
+      const left = Math.max(0, deadline - performance.now());
+      const m = Math.floor(left / 60_000), s = Math.floor(left / 1000) % 60;
+      const el = document.getElementById("clock");
+      if (el) { el.textContent = `${m}:${String(s).padStart(2, "0")}`; el.classList.toggle("sp-clock-low", left < 5 * 60_000); }
+      if (left <= 0 && !over) finish();
+    }, 250);
+
+    document.getElementById("quitIv").onclick = finish;
+    document.getElementById("skipIv").onclick = () => {
+      results.push({ title: c.title, difficulty: c.difficulty, ok: false });
+      i++; show();
+    };
+    document.getElementById("run").onclick = async () => {
+      verdict.textContent = c.lang === "python" ? "⧗ running…" : "⧗ compiling…";
+      verdict.className = "verdict";
+      const marker = c.lang === "python" ? "#__USER__" : "//__USER__";
+      let res = null;
+      try {
+        const r = await fetch("https://cpp-dojo.vlad-cioaba.workers.dev/api/run", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: c.harness.replace(marker, () => code.value), lang: c.lang }),
+        });
+        if (r.ok) res = await r.json();
+      } catch { /* offline */ }
+      if (!res) { verdict.textContent = "backend unreachable"; verdict.className = "verdict no"; return; }
+      out.hidden = false;
+      if (!res.compile.ok) {
+        out.textContent = res.compile.stderr.trim();
+        verdict.textContent = "✗ compile error"; verdict.className = "verdict no";
+      } else if (res.run.exit === 0 && /\bPASS\b/.test(res.run.stdout)) {
+        const secs = Math.round((performance.now() - pStart) / 1000);
+        results.push({ title: c.title, difficulty: c.difficulty, ok: true, secs });
+        solved++; i++;
+        show();
+      } else {
+        out.textContent = (res.run.stdout + "\n" + res.run.stderr).trim() + `\n[exit ${res.run.exit}]`;
+        verdict.textContent = "✗ tests fail"; verdict.className = "verdict no";
+      }
+    };
+  };
+  show();
 }
 
 setup();
