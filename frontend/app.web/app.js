@@ -140,6 +140,32 @@ const seenIO = new IntersectionObserver(
   { threshold: 0.15 }
 );
 
+/* one-card-at-a-time feed: card bodies are built lazily just before they
+   scroll into view (building all ~700 up front froze the first paint) */
+const hydrateIO = new IntersectionObserver(es => {
+  for (const e of es) if (e.isIntersecting) hydrateCard(e.target);
+}, { root: feed, rootMargin: "200% 0px" });
+
+function hydrateCard(el) {
+  if (el._hydrated || !el._card) return;
+  el._hydrated = true;
+  hydrateIO.unobserve(el);
+  const card = el._card, body = el.querySelector(".card-body");
+  if (card.type === "quiz") renderQuiz(card, body, el._isReview);
+  else if (card.type === "exercise") renderExercise(card, body);
+  else if (card.type === "challenge") renderExercise(card, body, true);
+  else if (card.type === "snippet") renderSnippet(card, body);
+  else renderFact(card, body);
+}
+
+/* “N / M” position pill */
+const posIO = new IntersectionObserver(es => {
+  for (const e of es) if (e.isIntersecting) {
+    const pill = document.getElementById("posPill");
+    if (pill) pill.textContent = `${e.target._idx + 1} / ${feed._count}`;
+  }
+}, { root: feed, threshold: 0.5 });
+
 const FILE_EXT = { fact: "md", quiz: "cpp", exercise: "cpp", snippet: "cpp", challenge: "cpp" };
 const FILE_STEM = { fact: "fact", quiz: "quiz", exercise: "drill", snippet: "snip", challenge: "chal" };
 
@@ -177,16 +203,19 @@ function render(cards, isReview) {
       </div>
       <div class="card-body"><h2>${inline(card.title)}</h2></div>`;
 
-    const body = el.querySelector(".card-body");
-    if (card.type === "quiz") renderQuiz(card, body, isReview);
-    else if (card.type === "exercise") renderExercise(card, body);
-    else if (card.type === "challenge") renderExercise(card, body, true);
-    else if (card.type === "snippet") renderSnippet(card, body);
-    else renderFact(card, body);
+    el._card = card;
+    el._isReview = isReview;
+    el._idx = idx;
 
     feed.appendChild(el);
+    if (idx < 2) hydrateCard(el);   // first screens build instantly
+    else hydrateIO.observe(el);
     seenIO.observe(el);
+    posIO.observe(el);
   });
+  feed._count = cards.length;
+  const pill = document.getElementById("posPill");
+  if (pill) { pill.hidden = cards.length === 0; pill.textContent = `1 / ${cards.length}`; }
 }
 
 function renderFact(card, body) {
@@ -741,7 +770,7 @@ async function boot() {
     if (cardFocus) {
       const target = allCards.find(c => c.title === cardFocus);
       const el = target && feed.querySelector(`.card[data-id="${target.id}"]`);
-      if (el) { el.scrollIntoView({ block: "start" }); el.classList.add("focused"); }
+      if (el) { hydrateCard(el); el.scrollIntoView({ block: "start" }); el.classList.add("focused"); }
     }
   } catch (err) {
     feed.innerHTML = `<div class="error-card">failed to load content: ${esc(String(err))}<br><br>

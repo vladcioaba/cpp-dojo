@@ -294,9 +294,9 @@ body::before {
 .feed {
   flex: 1 1 auto;
   overflow-y: auto;
-  scroll-snap-type: y proximity;
+  scroll-snap-type: y mandatory;
   scroll-behavior: smooth;
-  padding: 8px 20px 40vh;
+  padding: 8px 20px 8px;
   z-index: 1;
 }
 
@@ -317,14 +317,16 @@ body::before {
 
 /* ── cards ───────────────────────────────────────────────────── */
 
+/* one card fills the screen; the feed snaps card-to-card */
 .card {
   max-width: 680px;
-  margin: 0 auto 28px;
-  min-height: 52vh;
+  margin: 0 auto 14px;
+  min-height: calc(100% - 14px);
   display: flex;
   flex-direction: column;
   scroll-snap-align: start;
-  scroll-margin-top: 8px;
+  scroll-snap-stop: always;
+  scroll-margin-top: 0;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -334,8 +336,25 @@ body::before {
   transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .card.seen { opacity: 1; transform: none; }
-/* let the browser skip layout/paint for off-screen cards (593-card feed) */
-.card { content-visibility: auto; contain-intrinsic-size: auto 520px; }
+/* let the browser skip layout/paint for off-screen cards (~700-card feed) */
+.card { content-visibility: auto; contain-intrinsic-size: auto 90vh; }
+.card-body { overflow-y: auto; }
+
+/* position pill: “N / M” */
+.pos-pill {
+  position: fixed;
+  right: 14px;
+  bottom: 84px;
+  z-index: 20;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  pointer-events: none;
+}
 
 /* editor tab bar */
 .card-tab {
@@ -814,7 +833,7 @@ kbd {
 .lb-you strong { color: var(--lime); }
 
 @media (max-width: 640px) {
-  .card { min-height: 46vh; }
+
   .card-body { padding: 18px 16px 20px; }
 
   /* header nav hidden on mobile — replaced by the real bottom bar below */
