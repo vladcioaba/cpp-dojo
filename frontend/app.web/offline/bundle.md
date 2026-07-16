@@ -1972,6 +1972,1166 @@ int main() {
 
 **Editorial:** The cache-hit test asks "do I have *a* cached name?" instead of "do I have the cached name *for this userId*?", so whichever id arrives first poisons the cache for every id after it — `cachedId` is even stored but never consulted. The fix keys the hit on `cachedId == userId` and refills otherwise. This bug family (cache checked for presence but not for matching key/version) is what "sometimes returns stale data" reports usually turn out to be; a reviewer spots it by demanding that every cache read compares against the *full* lookup key — and by noticing stored state (`cachedId`) that nothing ever reads. Note the single-entry static cache is also not thread-safe; under concurrency this wants a mutex or a per-key map.
 
+## fact: Threads share everything — that is the power and the problem
+tags: concurrency, threads
+track: core
+
+A process owns an address space; a thread is just an execution path inside it. Two processes must be tricked into sharing memory (pipes, sockets, shm); two threads cannot be stopped from sharing it — every global, every heap object, every pointer you pass is visible to all of them. That is why threads are cheap to communicate with and easy to corrupt.
+
+`std::thread` starts running its callable immediately on construction — there is no `start()`. Before the `std::thread` object is destroyed you must decide its fate: `join()` blocks until the thread finishes, `detach()` abandons it to run on its own. Destroying a joinable thread calls `std::terminate` — the standard refuses to guess. Treat `detach()` with suspicion: a detached thread that touches objects owned by someone else is a use-after-free waiting for a slow day. In practice, almost every thread you write should be joined, and C++20's `std::jthread` (lesson 7) automates exactly that.
+
+Pass arguments by value by default; `std::ref` when you genuinely want to share — and then you have signed up for the synchronization lessons that follow.
+
+```cpp
+#include <thread>
+#include <cstdio>
+
+int main() {
+    int result = 0;
+    std::thread worker([&result] {      // starts immediately
+        result = 6 * 7;                  // shares main's stack variable
+    });
+    worker.join();                       // wait — mandatory before ~thread
+    std::printf("%d\n", result);         // 42, safe: join synchronizes
+}
+```
+
+## fact: Data races are UB — a mutex makes them impossible
+tags: concurrency, mutex
+track: core
+
+A data race is precise: two threads touch the same memory location, at least one is a write, and nothing orders the accesses. The standard's penalty is not "a stale value" — it is undefined behavior. `++count` compiles to read, add, write; two threads interleaving those steps lose increments, and the optimizer is allowed to assume it never happens.
+
+`std::mutex` fixes this by mutual exclusion: only one thread at a time may hold it, and everything done inside the critical section becomes visible to the next thread that acquires it. But never call `lock()`/`unlock()` by hand — an early return or exception between them leaves the mutex locked forever. Recall RAII: `std::lock_guard` locks in its constructor and unlocks in its destructor, on every exit path. C++17's `std::scoped_lock` is the same idea and also takes *several* mutexes at once, locking them with a deadlock-avoidance algorithm (lesson 10 shows why that matters).
+
+The discipline: associate each mutex with the exact data it guards — same class, adjacent declaration — and hold it for every read *and* write of that data. A mutex you only take when writing protects nothing.
+
+```cpp
+class SafeCounter {
+public:
+    void increment() {
+        std::lock_guard<std::mutex> lock(m_);  // unlocks on any exit
+        ++count_;
+    }
+    long value() const {
+        std::lock_guard<std::mutex> lock(m_);  // readers lock too!
+        return count_;
+    }
+private:
+    mutable std::mutex m_;   // mutable: lockable in const methods
+    long count_ = 0;
+};
+```
+
+## fact: condition_variable — sleep until something is true
+tags: concurrency, condition-variable
+track: core
+
+Polling a flag in a loop burns CPU; a `std::condition_variable` lets a thread sleep until another thread announces a change. The waiting side takes a `std::unique_lock` (not `lock_guard` — the wait must be able to unlock and relock, so it needs the movable, lock-again-later kind), then calls `wait`. Atomically, `wait` releases the mutex and puts the thread to sleep; when notified, it relocks before returning. The notifying side changes the shared state under the same mutex, then calls `notify_one()` or `notify_all()`.
+
+The rule that separates working code from interview failure: **always wait in a predicate loop**. The OS may wake a waiter with no notification at all — a *spurious wakeup* — and even a real notification proves only that the condition *was* true; another thread may have consumed it before you relocked. `cv.wait(lock, pred)` is exactly that loop: `while (!pred()) wait(lock);`. Write the condition, not the handshake.
+
+Second rule: the predicate's data must be modified under the mutex, or a waiter can check the predicate, decide to sleep, and miss the notification in the gap — the *lost wakeup*.
+
+```cpp
+std::mutex m;
+std::condition_variable cv;
+std::deque<int> inbox;
+
+void consumer() {
+    std::unique_lock<std::mutex> lock(m);
+    cv.wait(lock, [] { return !inbox.empty(); }); // predicate loop
+    int job = inbox.front(); inbox.pop_front();
+    // lock still held here
+}
+void producer(int job) {
+    { std::lock_guard<std::mutex> lock(m); inbox.push_back(job); }
+    cv.notify_one();
+}
+```
+
+## fact: std::atomic — when a mutex is overkill
+tags: concurrency, atomics
+track: core
+
+If the shared state is a single counter, flag, or pointer, a mutex is a sledgehammer: kernel arbitration, cache-line ping-pong on the lock itself, and a blocked thread on contention. `std::atomic<T>` makes individual loads, stores, and read-modify-write operations (`fetch_add`, `exchange`, `compare_exchange_strong`) indivisible — usually a single lock-free CPU instruction (`is_lock_free()` tells you).
+
+`counter.fetch_add(1)` is the atomic answer to the lost-increment race from lesson 2: the read-add-write happens as one step, no interleaving possible. `std::atomic<bool> done` is the idiomatic "please stop" flag between threads — a plain `bool` there is a data race and genuinely miscompiles: the optimizer may hoist the load out of the loop and spin forever.
+
+Know the boundary, because interviewers probe it. Atomics protect *one object per operation*. The moment an invariant spans two variables — balance and audit log, head and tail, "check then act" — separate atomic operations can interleave and break it. `if (count.load() > 0) count.fetch_add(-1);` is not atomic as a whole. That is mutex territory, or a single `compare_exchange` loop. Rule of thumb: atomics for independent scalars and flags, mutexes for invariants.
+
+```cpp
+std::atomic<long> hits{0};
+std::atomic<bool> stop{false};
+
+void worker() {
+    while (!stop.load()) {
+        hits.fetch_add(1);           // never loses an increment
+    }
+}
+// elsewhere: stop.store(true);      // all workers exit promptly
+```
+
+## fact: Memory orderings — relaxed, acquire, release, and happens-before
+tags: concurrency, memory-model
+track: core
+
+Every `std::atomic` operation takes a memory order, and this is the interview classic. Default is `memory_order_seq_cst`: all seq_cst operations across all threads appear in one global order — easiest to reason about, occasionally slower.
+
+`memory_order_relaxed` guarantees only atomicity: the operation itself is indivisible, but it orders *nothing else*. Perfect for a statistics counter no one reads until the threads join; disastrous for a "data is ready" flag.
+
+The pair that matters: a **release** store publishes, an **acquire** load subscribes. If thread B's acquire load reads the value written by thread A's release store, then everything A wrote *before* the release is visible to B *after* the acquire. That edge is called *happens-before*, and it is the entire game: a data race is exactly two conflicting accesses with no happens-before between them. Mutexes give you the same edge implicitly — unlock releases, lock acquires — which is why lesson 2 "just worked."
+
+The classic exam question: with both operations relaxed below, may the assert fire? Yes — without the release/acquire pair, nothing stops the reader from seeing `ready == true` yet a stale `payload`. Store the data, *then* release the flag; acquire the flag, *then* read the data.
+
+```cpp
+int payload = 0;
+std::atomic<bool> ready{false};
+
+void writer() {
+    payload = 42;                                    // A
+    ready.store(true, std::memory_order_release);    // B: publish A
+}
+void reader() {
+    while (!ready.load(std::memory_order_acquire)) {} // C: sees B...
+    assert(payload == 42);                            // ...so A is visible
+}
+```
+
+## fact: async, future, promise, packaged_task — getting a value back out
+tags: concurrency, futures
+track: core
+
+`std::thread` returns nothing — smuggling a result out through a captured reference is the manual, error-prone way. The futures machinery is the typed channel: a `std::future<T>` is a one-shot handle to a value (or exception) that will exist later; `get()` blocks for it, and may be called once.
+
+Three producers of futures, from highest level to lowest. `std::async(std::launch::async, f, args...)` runs `f` on another thread and returns its result as a future — exceptions thrown inside travel through and rethrow at `get()`. Gotcha the interviewer knows: with the default policy, the system may pick `deferred`, meaning `f` runs lazily on the *calling* thread at `get()` — pass `std::launch::async` explicitly when you mean concurrency. Second gotcha: a future from `std::async` blocks in its destructor until the task finishes — ignoring the return value serializes your "parallel" code.
+
+`std::packaged_task<R(Args...)>` wraps a callable and exposes a future, but *you* choose where it runs — the building block for thread pools (lesson 9). `std::promise<T>` is the raw pipe: you `set_value` manually from anywhere. One writer, one reader, once.
+
+```cpp
+long long sum(const std::vector<int>& v, std::size_t lo, std::size_t hi);
+
+long long parallel_sum(const std::vector<int>& v) {
+    auto half = v.size() / 2;
+    auto lower = std::async(std::launch::async,     // really a new thread
+                            sum, std::cref(v), 0, half);
+    long long upper = sum(v, half, v.size());       // this thread does the rest
+    return lower.get() + upper;                     // blocks, rethrows if needed
+}
+```
+
+## fact: jthread and stop_token — C++20 threads that clean up after themselves
+tags: concurrency, jthread
+track: core
+
+Two chronic `std::thread` diseases: forgetting to `join()` (instant `std::terminate` when the object dies joinable) and having no standard way to *ask* a thread to stop — everyone hand-rolls an `atomic<bool>` flag. C++20's `std::jthread` cures both.
+
+Its destructor calls `request_stop()` and then `join()` — a thread object you can simply let go out of scope, RAII applied to execution itself. Early returns and exceptions in the owning scope now clean up the thread instead of killing the process.
+
+Cooperative cancellation is built in. If the callable's first parameter is a `std::stop_token`, the jthread passes one automatically, wired to its internal `std::stop_source`. The loop polls `st.stop_requested()` and exits at the next safe point — nothing is killed mid-instruction; the thread finishes its current iteration, releases its resources, unwinds normally. That "cooperative" is the point: preemptive thread killing (looking at you, `pthread_cancel`) can drop a mutex locked forever.
+
+For threads blocked on a condition variable rather than looping, `std::condition_variable_any::wait(lock, stop_token, pred)` wakes when stop is requested, and `std::stop_callback` runs arbitrary code on request — the escape hatches that make cancellation reach sleeping threads.
+
+```cpp
+void sample_sensors();
+void do_other_work();
+
+void poller(std::stop_token st) {
+    while (!st.stop_requested()) {        // cheap check, each iteration
+        sample_sensors();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}   // exits cleanly at the next check
+
+int main() {
+    std::jthread t(poller);   // stop_token supplied automatically
+    do_other_work();
+}   // ~jthread: request_stop() + join() — no terminate, no leak
+```
+
+## fact: shared_mutex — many readers or one writer
+tags: concurrency, shared-mutex
+track: core
+
+A plain mutex serializes readers that never conflict with each other. For read-mostly data — config lookups, routing tables, caches read a million times per update — that is pure waste. `std::shared_mutex` (C++17) has two modes: any number of threads may hold it *shared*, or exactly one may hold it *exclusive*, never both.
+
+The RAII pairing: readers take `std::shared_lock<std::shared_mutex>`, writers take `std::unique_lock<std::shared_mutex>` (or `lock_guard`/`scoped_lock`). Same acquire/release visibility guarantees as a plain mutex — this is a throughput optimization, not a different correctness model. The reader path pairs naturally with `const` methods and a `mutable` mutex, so the type system helps police who counts as a reader.
+
+Honest caveats, because interviewers ask. Shared locking is *more* expensive per acquisition than a plain mutex — the win only appears when read critical sections are long or readers are many; benchmark before reaching for it. Under a constant stream of readers, a writer may starve (the standard leaves the fairness policy to the implementation). And a reader that mutates anything — even a cached field — under a shared lock is a data race with the other readers; that is what `mutable std::mutex` on the side or an upgrade-to-exclusive redesign is for.
+
+```cpp
+class Directory {
+public:
+    std::optional<int> find(const std::string& k) const {
+        std::shared_lock lock(m_);          // readers run in parallel
+        auto it = map_.find(k);
+        return it == map_.end() ? std::nullopt : std::optional{it->second};
+    }
+    void set(const std::string& k, int v) {
+        std::unique_lock lock(m_);          // writer waits them all out
+        map_[k] = v;
+    }
+private:
+    mutable std::shared_mutex m_;
+    std::map<std::string, int> map_;
+};
+```
+
+## fact: Thread pools — stop paying thread startup costs
+tags: concurrency, thread-pool
+track: core
+
+Spawning a thread costs a system call, kernel bookkeeping, and a fresh stack (megabytes of address space) — tens of microseconds before your task runs a single instruction. Spawn one per request and a busy server drowns in threads: more runnable threads than cores means the scheduler burns time context-switching instead of computing (*oversubscription*).
+
+The fix is the thread pool, and it is just lessons 2, 3, and 6 assembled: N worker threads created once (N ≈ `std::thread::hardware_concurrency()`), a queue of `std::function<void()>` or `std::packaged_task` guarded by a mutex, and a condition variable so idle workers sleep instead of spin. `submit()` pushes a task and notifies; each worker loops pop-task, run-task. Results come back through the futures machinery — wrap the callable in a `packaged_task`, hand its future to the caller, push the task into the queue.
+
+Shutdown is the part people get wrong: set a `stopping` flag *under the mutex*, `notify_all()`, and make workers wait on the predicate "queue non-empty **or** stopping" — a worker sleeping on "non-empty" alone never wakes up to be told goodbye. C++ still has no standard pool (executors keep slipping), so every codebase has one; be the person who can whiteboard it.
+
+```cpp
+// The heart of every pool — the worker loop:
+struct ThreadPool {
+    std::mutex m_;
+    std::condition_variable cv_;
+    std::deque<std::function<void()>> queue_;
+    bool stopping_ = false;
+
+    void worker_loop() {
+        for (;;) {
+            std::function<void()> task;
+            {
+                std::unique_lock<std::mutex> lock(m_);
+                cv_.wait(lock, [&] { return stopping_ || !queue_.empty(); });
+                if (stopping_ && queue_.empty()) return;   // drained: exit
+                task = std::move(queue_.front());
+                queue_.pop_front();
+            }       // unlock BEFORE running — never run user code under the lock
+            task();
+        }
+    }
+};
+```
+
+## fact: The concurrency bugs everyone writes once
+tags: concurrency, debugging
+track: core
+
+You now have all the tools; here is how they cut people. Four classics to check for in every review — including your own.
+
+**ABBA deadlock.** Thread 1 locks A then B; thread 2 locks B then A; each holds one and waits forever for the other. Fix: one global lock order everywhere (document it, or order by address), or take both in a single `std::scoped_lock(a, b)`, which internally uses the `std::lock` deadlock-avoidance algorithm. Never call a callback or unknown virtual while holding a lock — the "other" lock in an ABBA is usually hiding inside someone else's code.
+
+**Forgotten join.** Any path that destroys a joinable `std::thread` — an early return, a thrown exception — is `std::terminate`. Use `std::jthread` and the bug class disappears.
+
+**Capturing the loop variable by reference.** `for (int i = 0; i < 4; ++i) threads.emplace_back([&] { work(i); });` — every thread reads `i` *later*, mid-mutation or dangling after the loop. Capture per-thread values by copy: `[i]`. `[&]` on anything that outlives or races the loop body is the sharpest edge in the language.
+
+**Locking only the writes.** Readers of guarded data need the same mutex (lesson 2) — a read-side race is still UB, even if it "only" reads.
+
+```cpp
+void process_chunk(int i);
+
+void run_all() {
+    std::vector<std::jthread> pool;
+    for (int i = 0; i < 4; ++i) {
+        pool.emplace_back([i] {          // [i] by copy — NOT [&]
+            process_chunk(i);
+        });
+    }
+}   // jthreads join themselves; no terminate, no dangling i
+```
+
+## challenge: a counter four threads can trust
+tags: concurrency, mutex, threads
+track: core
+difficulty: easy
+
+Four worker threads will each call `increment()` 25,000 times. Make `Counter` thread-safe with a `std::mutex` so the final value is exactly 100,000 — no lost updates, ever. Keep the public interface unchanged.
+
+hint: `++count_` is three steps — read, add, write — and two threads can interleave them, both writing back the same value.
+hint: Add a `std::mutex` member and hold it for the entire read-modify-write. Use `std::lock_guard`, not manual lock()/unlock().
+hint: `value()` is const but must also lock — a read racing a write is still a data race. Declare the mutex `mutable`.
+
+```cpp
+// starter
+// Make Counter safe to call from many threads at once.
+class Counter {
+public:
+    void increment() {
+        // TODO: protect the update with a std::mutex so that
+        //       concurrent increments are never lost.
+        (void)count_;
+    }
+    long value() const {
+        // TODO: reads need the same protection as writes.
+        return count_;
+    }
+private:
+    // TODO: add the mutex member (hint: value() is const...)
+    long count_ = 0;
+};
+```
+
+```cpp
+class Counter {
+public:
+    void increment() {
+        std::lock_guard<std::mutex> lock(m_);   // unlocks on every exit path
+        ++count_;
+    }
+    long value() const {
+        std::lock_guard<std::mutex> lock(m_);   // readers lock too
+        return count_;
+    }
+private:
+    mutable std::mutex m_;   // mutable: lockable inside const methods
+    long count_ = 0;
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    Counter c;
+    std::vector<std::thread> workers;
+    for (int t = 0; t < 4; ++t)
+        workers.emplace_back([&c] {
+            for (int i = 0; i < 25000; ++i) c.increment();
+        });
+    for (auto& w : workers) w.join();
+    assert(c.value() == 100000);   // 4 threads x 25,000 — nothing lost
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The unprotected `++count_` compiles to load, add, store; when two threads interleave those steps they both write back the same value and one increment vanishes. Holding a `std::mutex` across the whole read-modify-write makes the sequence indivisible, and the unlock/lock pair also publishes the new value to the next thread (release/acquire semantics for free). Two details reviewers look for: `std::lock_guard` instead of manual `lock()`/`unlock()` so an exception can't leave the mutex held, and a `mutable` mutex so the `const` reader path locks too — an unlocked read racing a locked write is still undefined behavior.
+
+## challenge: lock-free ticket counter
+tags: concurrency, atomics
+track: core
+difficulty: easy
+
+Same job as the mutex counter — four threads, 25,000 `take()` calls each, exact total of 100,000 — but this time the shared state is a single integer, so a mutex is overkill. Make `TicketCounter` lock-free with `std::atomic`.
+
+hint: Change the member's type: `std::atomic<long>`. The counter is a single independent scalar — exactly what atomics are for.
+hint: The atomic read-modify-write for "add and return the old value" is `fetch_add(1)`. Plain `issued_ = issued_ + 1` on an atomic is TWO operations and still loses updates.
+hint: A standalone counter needs no ordering with other data — `std::memory_order_relaxed` is correct and fastest. (The default `seq_cst` also passes.)
+
+```cpp
+// starter
+// Lock-free counter: no mutex allowed — use std::atomic so that
+// concurrent take() calls are indivisible.
+class TicketCounter {
+public:
+    void take() {
+        // TODO: increment atomically (one fetch_add, not load-then-store)
+    }
+    long issued() const {
+        return 0;   // TODO: load the current value
+    }
+private:
+    long issued_ = 0;   // TODO: make this std::atomic<long>
+};
+```
+
+```cpp
+class TicketCounter {
+public:
+    void take() {
+        issued_.fetch_add(1, std::memory_order_relaxed);  // one indivisible RMW
+    }
+    long issued() const {
+        return issued_.load(std::memory_order_relaxed);
+    }
+private:
+    std::atomic<long> issued_{0};
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    TicketCounter c;
+    std::vector<std::thread> workers;
+    for (int t = 0; t < 4; ++t)
+        workers.emplace_back([&c] {
+            for (int i = 0; i < 25000; ++i) c.take();
+        });
+    for (auto& w : workers) w.join();
+    assert(c.issued() == 100000);   // atomic RMW: nothing lost, no mutex
+    std::puts("PASS");
+}
+```
+
+**Editorial:** `fetch_add(1)` performs the read-modify-write as one indivisible hardware operation (`lock xadd` on x86, `ldadd` on ARM), so interleaving is impossible — the correctness of the mutex version at a fraction of the cost. The trap the exercise plants: writing `issued_ = issued_ + 1` even on an `atomic<long>` is an atomic load followed by a separate atomic store — no lost *bits*, but lost *increments* all the same. `memory_order_relaxed` is enough here because the counter carries no dependent data; the joins at the end give the main thread a happens-before edge to read the final total. When an invariant spans two variables, though, atomics stop composing — that's mutex territory.
+
+## challenge: one-slot channel handoff
+tags: concurrency, condition-variable
+track: core
+difficulty: medium
+
+Build a one-slot channel between a producer and a consumer using a mutex and a condition variable. `send()` blocks until the slot is empty, deposits the value, and signals; `receive()` blocks until the slot is full, takes the value, and signals. The harness sends 1..200 and must receive them in order — nothing lost, nothing duplicated. Waits must be real waits (condition variable), not spin loops.
+
+hint: The waiting side needs `std::unique_lock` (a condition_variable must be able to unlock and relock during wait) — `lock_guard` cannot do that.
+hint: Always wait with a predicate: `cv_.wait(lock, [this]{ return !full_; })` in send, `[this]{ return full_; }` in receive. This survives spurious wakeups — a bare wait() does not.
+hint: Change `full_` while holding the mutex, then notify. Since one condition_variable serves both "became full" and "became empty", notify_all() is the safe choice.
+
+```cpp
+// starter
+// One-slot channel: send() blocks while the slot is occupied,
+// receive() blocks while it is empty. Values arrive in send order.
+class Channel {
+public:
+    void send(int v) {
+        // TODO: wait (predicate loop!) until !full_,
+        //       then store v, mark full_, and notify.
+    }
+    int receive() {
+        // TODO: wait (predicate loop!) until full_,
+        //       then clear full_, notify, and return the value.
+        return -1;
+    }
+private:
+    std::mutex m_;
+    std::condition_variable cv_;
+    int slot_ = 0;
+    bool full_ = false;
+};
+```
+
+```cpp
+class Channel {
+public:
+    void send(int v) {
+        std::unique_lock<std::mutex> lock(m_);
+        cv_.wait(lock, [this] { return !full_; });  // sleeps until slot free
+        slot_ = v;
+        full_ = true;
+        cv_.notify_all();                           // wake the receiver
+    }
+    int receive() {
+        std::unique_lock<std::mutex> lock(m_);
+        cv_.wait(lock, [this] { return full_; });   // sleeps until slot full
+        full_ = false;
+        int v = slot_;
+        cv_.notify_all();                           // wake the sender
+        return v;
+    }
+private:
+    std::mutex m_;
+    std::condition_variable cv_;
+    int slot_ = 0;
+    bool full_ = false;
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    Channel ch;
+    std::thread producer([&ch] {
+        for (int i = 1; i <= 200; ++i) ch.send(i);
+    });
+    long sum = 0;
+    for (int i = 1; i <= 200; ++i) {
+        int v = ch.receive();
+        assert(v == i);            // strict order: nothing lost or duplicated
+        sum += v;
+    }
+    producer.join();
+    assert(sum == 200 * 201 / 2);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The canonical condition-variable rendezvous. `wait(lock, pred)` expands to `while (!pred()) wait(lock);` — the loop is load-bearing: the OS may wake a waiter spuriously, and even a genuine notify only proves the condition *was* true a moment ago. `wait` atomically releases the mutex and sleeps, which closes the lost-wakeup gap — provided the notifier flips `full_` *under the same mutex*. `unique_lock` is required because `wait` must unlock and relock mid-flight. One CV serves both directions here, so `notify_all` is the robust choice; with exactly one thread per side `notify_one` also works, but the moment a second producer appears it can wake the wrong class of waiter — the predicate loop is what keeps even that case correct.
+
+## challenge: bounded buffer under pressure
+tags: concurrency, condition-variable, producer-consumer
+track: core
+difficulty: hard
+
+The full producer/consumer queue: a FIFO with a hard capacity of 4 slots. `push()` blocks while the buffer is full (backpressure — producers must not outrun the consumer's memory), `pop()` blocks while it is empty. Two producer threads push 1,000 items each while the main thread pops all 2,000; every element must make it through exactly once. Use a mutex plus *two* condition variables — one per direction.
+
+hint: Two waits, two conditions: push waits for `queue_.size() < capacity_` and notifies not_empty_ after inserting; pop waits for `!queue_.empty()` and notifies not_full_ after removing.
+hint: Both waits need std::unique_lock and a predicate lambda — with multiple producers blocked at once, spurious and stolen wakeups WILL happen; the predicate loop re-checks after every wake.
+hint: Why two condition variables? With one shared cv and notify_one, a producer's notify can wake another producer (still full, goes back to sleep) instead of the consumer — a stall. Separate cvs make every notify land on the side that can act.
+
+```cpp
+// starter
+// Fixed-capacity FIFO shared by producers and consumers.
+// push() blocks while full; pop() blocks while empty.
+class BoundedBuffer {
+public:
+    explicit BoundedBuffer(std::size_t capacity) : capacity_(capacity) {}
+    void push(int v) {
+        // TODO: wait on not_full_ until queue_.size() < capacity_,
+        //       push_back, notify not_empty_.
+    }
+    int pop() {
+        // TODO: wait on not_empty_ until !queue_.empty(),
+        //       pop_front, notify not_full_, return the value.
+        return 0;
+    }
+private:
+    std::size_t capacity_;
+    std::deque<int> queue_;
+    std::mutex m_;
+    std::condition_variable not_full_;
+    std::condition_variable not_empty_;
+};
+```
+
+```cpp
+class BoundedBuffer {
+public:
+    explicit BoundedBuffer(std::size_t capacity) : capacity_(capacity) {}
+    void push(int v) {
+        std::unique_lock<std::mutex> lock(m_);
+        not_full_.wait(lock, [this] { return queue_.size() < capacity_; });
+        queue_.push_back(v);
+        not_empty_.notify_one();     // exactly the side that can proceed
+    }
+    int pop() {
+        std::unique_lock<std::mutex> lock(m_);
+        not_empty_.wait(lock, [this] { return !queue_.empty(); });
+        int v = queue_.front();
+        queue_.pop_front();
+        not_full_.notify_one();      // a producer slot just opened
+        return v;
+    }
+private:
+    std::size_t capacity_;
+    std::deque<int> queue_;
+    std::mutex m_;
+    std::condition_variable not_full_;
+    std::condition_variable not_empty_;
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    BoundedBuffer buf(4);   // tiny capacity: producers must block on backpressure
+    auto produce = [&buf](int base) {
+        for (int i = 1; i <= 1000; ++i) buf.push(base + i);
+    };
+    std::thread p1(produce, 0);        // pushes 1..1000
+    std::thread p2(produce, 100000);   // pushes 100001..101000
+    long long sum = 0;
+    for (int i = 0; i < 2000; ++i) sum += buf.pop();   // consumer: main thread
+    p1.join();
+    p2.join();
+    long long expected = 2 * (1000LL * 1001 / 2) + 1000LL * 100000;
+    assert(sum == expected);           // every item through, exactly once
+    std::puts("PASS");
+}
+```
+
+**Editorial:** This is the pattern behind every work queue and pipeline stage. Capacity 4 against 2,000 items guarantees the interesting states actually occur: producers pile up on `not_full_`, the consumer drains, everyone hands off through the same mutex. The two-CV design is not cosmetic — with a single CV and `notify_one`, a wakeup can land on a waiter from the *same* side (producer wakes producer while the buffer is still full), which stalls until a spurious wake rescues you; splitting the channels makes each notify meaningful. Note that both notifies are issued while the lock is held — correct, and simplest; dropping the lock first is a micro-optimization that must not be attempted before the predicate discipline is second nature. The distinct value ranges (1..1000 vs 100001..101000) make the checksum sensitive to any lost or duplicated element from either producer.
+
+## challenge: split the sum with std::async
+tags: concurrency, async, futures
+track: core
+difficulty: easy
+
+Implement `parallelSum`: sum a vector by farming the first half out to `std::async` while the calling thread sums the second half, then combine the two results. Mind the launch policy — "async by default" is not what the default does. Handle odd lengths and the empty vector.
+
+hint: Split at `v.begin() + v.size() / 2`. `std::accumulate(first, last, 0LL)` sums a range — the `0LL` keeps the arithmetic in `long long`.
+hint: Pass `std::launch::async` explicitly. The default policy may choose `deferred`, which runs the work lazily on YOUR thread at get() — legal, but not parallel.
+hint: Launch the async task FIRST, then sum the other half on the current thread, then `lower.get() + upper`. Calling get() before doing your own half serializes everything.
+
+```cpp
+// starter
+// Sum v using two concurrent halves: one via std::async, one on the
+// calling thread. Must be correct for odd sizes and the empty vector.
+long long parallelSum(const std::vector<int>& v) {
+    // TODO:
+    //   auto mid = v.begin() + v.size() / 2;
+    //   future = std::async(std::launch::async, sum of [begin, mid))
+    //   sum [mid, end) yourself, then combine with future.get()
+    return 0;
+}
+```
+
+```cpp
+long long parallelSum(const std::vector<int>& v) {
+    auto mid = v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2);
+    auto lower = std::async(std::launch::async, [&v, mid] {
+        return std::accumulate(v.begin(), mid, 0LL);
+    });
+    long long upper = std::accumulate(mid, v.end(), 0LL);  // work while waiting
+    return lower.get() + upper;   // blocks; rethrows the task's exception if any
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    std::vector<int> v(10000);
+    std::iota(v.begin(), v.end(), 1);            // 1..10000
+    assert(parallelSum(v) == 50005000LL);
+    std::vector<int> odd{3, 1, 4, 1, 5};          // odd length
+    assert(parallelSum(odd) == 14);
+    std::vector<int> one{42};
+    assert(parallelSum(one) == 42);
+    assert(parallelSum({}) == 0);                 // empty: async over nothing
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The shape to internalize: launch the async task, *then* do your own share, *then* `get()` — calling `get()` immediately turns "parallel" into "sequential with extra steps". `std::launch::async` is spelled out because the default policy (`async | deferred`) lets the implementation defer the task to run lazily on the calling thread — correct results, zero concurrency, and a classic interview probe. The returned future's `get()` both joins the helper and rethrows any exception the task threw, which is the machinery's quiet superpower over raw `std::thread`. Odd sizes fall out naturally from splitting on iterators; the empty vector works because both halves are empty ranges.
+
+## challenge: promise/future relay
+tags: concurrency, futures, promise
+track: core
+difficulty: medium
+
+Wire a two-stage pipeline by hand — no `std::async` this time. Stage 1 runs in its own thread and squares the seed; stage 2 runs in another thread, waits for stage 1's result, and adds 100. Each handoff is a `std::promise`/`std::future` pair: the promise is the writing end, the future the reading end. `pipeline()` returns the final value.
+
+hint: `std::promise<int> p1; std::future<int> f1 = p1.get_future();` — create the pair BEFORE launching the thread, move/capture the promise into the producer, keep the future on the consuming side.
+hint: Stage 2's thread body is just `p2.set_value(f1.get() + 100);` — future::get() blocks until stage 1 calls set_value, then hands over the value. get() may be called only once per future.
+hint: Join both threads before returning. (set_value also propagates through a stored exception if you use set_exception — the same channel carries errors.)
+
+```cpp
+// starter
+// Stage 1 (own thread): seed * seed  --promise/future-->
+// Stage 2 (own thread): result + 100 --promise/future--> caller.
+int pipeline(int seed) {
+    // TODO:
+    //   promise<int> p1 + future f1; thread A: p1.set_value(seed * seed)
+    //   promise<int> p2 + future f2; thread B: p2.set_value(f1.get() + 100)
+    //   join both, return f2.get()
+    return 0;
+}
+```
+
+```cpp
+int pipeline(int seed) {
+    std::promise<int> p1;
+    std::future<int> f1 = p1.get_future();
+    std::thread stage1([&p1, seed] {
+        p1.set_value(seed * seed);           // fulfil the first promise
+    });
+
+    std::promise<int> p2;
+    std::future<int> f2 = p2.get_future();
+    std::thread stage2([&p2, &f1] {
+        p2.set_value(f1.get() + 100);        // blocks until stage 1 delivers
+    });
+
+    stage1.join();
+    stage2.join();
+    return f2.get();
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    assert(pipeline(0) == 100);     // 0*0 + 100
+    assert(pipeline(5) == 125);     // 25 + 100
+    assert(pipeline(-4) == 116);    // 16 + 100
+    assert(pipeline(12) == 244);    // 144 + 100
+    std::puts("PASS");
+}
+```
+
+**Editorial:** `std::promise`/`std::future` is the raw one-shot channel underneath `std::async`: `set_value` on one side, a blocking `get()` on the other, with the synchronization (the value written before `set_value` happens-before the return of `get()`) built in — no mutex, no condition variable, no flag. The order of operations matters: create the pair, *then* launch the thread, so the future already exists when the producer runs. Two classic slips this exercise flushes out: calling `get()` twice on the same future (it's a one-shot — the second call is UB on a moved-from state), and forgetting that a destroyed promise with no value set poisons its future with `broken_promise`. For error paths, `set_exception` uses the same channel — the exception rethrows out of `get()`.
+
+## challenge: build it once — call_once
+tags: concurrency, call-once, initialization
+track: core
+difficulty: easy
+
+`Config` (provided by the harness) is expensive to build, and the harness counts every construction. Right now `ConfigCache::get()` builds a fresh one on *every* call — from four threads at once, no less. Make it lazy and thread-safe: exactly one `Config` is ever constructed, and every caller gets a reference to that same object. The members you need are already declared.
+
+hint: The class already owns a `std::once_flag` — that is `std::call_once`'s bookmark. Pass it plus a callable; the callable runs exactly once no matter how many threads arrive.
+hint: `std::call_once(flag_, [this] { cfg_ = std::make_unique<Config>(); });` — every other thread blocks until the winner finishes, then skips the callable.
+hint: A double-checked `if (!cfg_)` without synchronization is the classic broken version — two threads can both see null and both construct. call_once (or a function-local static) is the correct tool.
+
+```cpp
+// starter
+// Config is defined by the harness; each construction is counted.
+// Make get() build the Config exactly once, no matter how many
+// threads call it concurrently, and always return the same object.
+class ConfigCache {
+public:
+    Config& get() {
+        cfg_ = std::make_unique<Config>();   // BUG: builds one per call!
+        return *cfg_;
+    }
+private:
+    std::once_flag flag_;                    // use me
+    std::unique_ptr<Config> cfg_;
+};
+```
+
+```cpp
+class ConfigCache {
+public:
+    Config& get() {
+        std::call_once(flag_, [this] {       // runs exactly once, ever
+            cfg_ = std::make_unique<Config>();
+        });
+        return *cfg_;                        // all callers: same object
+    }
+private:
+    std::once_flag flag_;
+    std::unique_ptr<Config> cfg_;
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+std::atomic<int> g_built{0};
+struct Config {
+    int version = 7;
+    Config() { g_built.fetch_add(1); }
+};
+//__USER__
+int main() {
+    ConfigCache cache;
+    const Config* seen[4] = {nullptr, nullptr, nullptr, nullptr};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; ++t)
+        threads.emplace_back([&cache, &seen, t] {
+            for (int i = 0; i < 1000; ++i) {
+                Config& c = cache.get();
+                seen[t] = &c;
+            }
+        });
+    for (auto& th : threads) th.join();
+    assert(g_built.load() == 1);                       // built exactly once
+    assert(seen[0] == seen[1] && seen[1] == seen[2]
+                              && seen[2] == seen[3]);  // same object for all
+    assert(cache.get().version == 7);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** `std::call_once` + `std::once_flag` is the standard's "initialize exactly once" primitive: the first thread runs the callable while latecomers block, then everyone proceeds — and if the callable throws, the flag stays unset so the next caller retries. The starter builds 4,000 Configs (and races on the `unique_ptr` besides); the naive `if (!cfg_)` check narrows that to "sometimes two" — still wrong. Worth knowing the alternative: when the lazy object can live in a function-local `static`, C++11 magic statics give the same guarantee with less code (the Meyers singleton). `call_once` earns its keep when the target is a class member, as here, or when initialization needs runtime arguments.
+
+## challenge: read-mostly phone book
+tags: concurrency, shared-mutex, readers-writers
+track: core
+difficulty: medium
+
+Wrap a `std::map` so many threads can `lookup()` simultaneously while `update()` gets exclusive access — the readers-writers pattern with `std::shared_mutex`. The harness hammers it with three reader threads while the main thread performs 5,000 updates. Readers must never block each other; a plain `std::mutex` would work but wastes the read parallelism this exercise is about.
+
+hint: Two lock modes, two RAII types: writers take `std::unique_lock<std::shared_mutex>`, readers take `std::shared_lock<std::shared_mutex>`.
+hint: `lookup()` is const but still locks — declare the shared_mutex `mutable`. Return `std::nullopt` when the key is missing rather than throwing.
+hint: `map::find` under the shared lock, `map::operator[]` (or insert_or_assign) under the unique lock. Copy the value out before the lock is released — returning a reference into the map would dangle past the lock.
+
+```cpp
+// starter
+// Many concurrent readers, occasional writer. Readers must be able
+// to run in parallel with each other: use std::shared_mutex.
+class PhoneBook {
+public:
+    void update(const std::string& name, int number) {
+        // TODO: exclusive lock, then write to entries_
+    }
+    std::optional<int> lookup(const std::string& name) const {
+        // TODO: shared lock, then read from entries_
+        return std::nullopt;
+    }
+private:
+    // TODO: a mutable std::shared_mutex member
+    std::map<std::string, int> entries_;
+};
+```
+
+```cpp
+class PhoneBook {
+public:
+    void update(const std::string& name, int number) {
+        std::unique_lock<std::shared_mutex> lock(m_);  // exclusive: one writer
+        entries_[name] = number;
+    }
+    std::optional<int> lookup(const std::string& name) const {
+        std::shared_lock<std::shared_mutex> lock(m_);  // shared: readers overlap
+        auto it = entries_.find(name);
+        if (it == entries_.end()) return std::nullopt;
+        return it->second;                             // copied out under lock
+    }
+private:
+    mutable std::shared_mutex m_;   // mutable: const readers still lock
+    std::map<std::string, int> entries_;
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    PhoneBook book;
+    book.update("alice", 100);
+    book.update("bob", 200);
+    assert(book.lookup("alice") == 100);        // basic write-then-read
+    assert(book.lookup("bob") == 200);
+    assert(!book.lookup("nobody").has_value()); // missing key
+
+    std::atomic<bool> ok{true};
+    std::vector<std::thread> readers;
+    for (int t = 0; t < 3; ++t)
+        readers.emplace_back([&] {
+            for (int i = 0; i < 20000; ++i) {
+                auto a = book.lookup("alice");           // stable entry
+                if (a != 100) ok = false;
+                auto c = book.lookup("carol");           // entry in flux
+                if (c && (*c < 1 || *c > 5000)) ok = false;
+            }
+        });
+    for (int i = 1; i <= 5000; ++i) book.update("carol", i);  // writer
+    for (auto& r : readers) r.join();
+    assert(ok.load());                          // no torn or bogus reads
+    assert(book.lookup("carol") == 5000);       // last write wins
+    std::puts("PASS");
+}
+```
+
+**Editorial:** `std::shared_mutex` has two modes — any number of shared holders, or one exclusive holder — mapped onto RAII by `std::shared_lock` and `std::unique_lock`. The visibility guarantees match a plain mutex; this is purely a throughput play for read-mostly data. The idiomatic details carry the exercise: the mutex is `mutable` so `const` readers can lock (const = reader is exactly the convention shared_mutex rewards), and `lookup` returns the value *by copy* inside an `optional` — returning `const int&` into the map would dangle the instant the lock released and the writer touched the tree. Caveats worth repeating in review: shared locking costs more per acquisition than a plain mutex, and writers can starve under heavy read traffic — measure before committing.
+
+## challenge: a worker that stops when asked
+tags: concurrency, jthread, cancellation
+track: core
+difficulty: medium
+
+Implement `pollSensor`, a worker loop for a `std::jthread`. It bumps the sample counter and yields, over and over — until stop is requested, at which point it must return promptly. The harness lets it run, then destroys the jthread: the destructor issues `request_stop()` and joins, and the counter must stand still afterwards. This is C++20 cooperative cancellation — no hand-rolled `atomic<bool> quit` flag.
+
+hint: When a jthread's callable takes `std::stop_token` as its first parameter, the jthread supplies one automatically, connected to its internal stop_source.
+hint: The loop shape is: `while (!st.stop_requested()) { ...work...; std::this_thread::yield(); }` — poll the token once per iteration and simply return when it fires.
+hint: "Cooperative" means the thread exits at its next check — nothing is killed mid-operation. The jthread destructor then joins cleanly. If your loop never consults the token, the destructor waits forever.
+
+```cpp
+// starter
+// Worker for a std::jthread: count samples until asked to stop,
+// then return promptly. The jthread passes the stop_token itself.
+void pollSensor(std::stop_token st, std::atomic<long>& samples) {
+    // TODO: while stop has NOT been requested:
+    //         samples.fetch_add(1); std::this_thread::yield();
+}
+```
+
+```cpp
+void pollSensor(std::stop_token st, std::atomic<long>& samples) {
+    while (!st.stop_requested()) {                    // cooperative check
+        samples.fetch_add(1, std::memory_order_relaxed);
+        std::this_thread::yield();                    // be a polite spinner
+    }
+}   // returns at the first check after request_stop()
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    std::atomic<long> samples{0};
+    {
+        std::jthread worker(pollSensor, std::ref(samples));
+        // give the worker a moment to prove it is alive
+        for (int i = 0; i < 500000 && samples.load() < 1000; ++i)
+            std::this_thread::yield();
+        assert(samples.load() >= 1000);      // it ran
+    }   // ~jthread: request_stop() then join() — must return promptly
+    long frozen = samples.load();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    assert(samples.load() == frozen);        // fully stopped: counter is still
+    std::puts("PASS");
+}
+```
+
+**Editorial:** `std::jthread` fixes the two chronic `std::thread` diseases at once: its destructor calls `request_stop()` and then `join()` (no more `std::terminate` from a forgotten join), and it carries a built-in cancellation channel — a `std::stop_source` whose `std::stop_token` is handed to your callable when the first parameter slot asks for it. Cancellation is *cooperative*: `request_stop()` just flips a flag; the worker exits at its next `stop_requested()` check, finishing its current iteration and unwinding normally — contrast `pthread_cancel`, which can kill a thread while it holds a mutex. The harness checks both halves: the worker made progress, and after the destructor it made none. For workers that sleep on a condition variable instead of looping, `condition_variable_any::wait(lock, stop_token, pred)` is the stop-aware wait.
+
+## challenge: two-mutex transfer without deadlock
+tags: concurrency, deadlock, mutex
+track: core
+difficulty: medium
+
+Each `Account` carries its own mutex. Implement `transfer()` so the debit and credit happen atomically — both mutexes held at once. The trap: the harness runs `transfer(a, b, ...)` and `transfer(b, a, ...)` concurrently, so locking "first argument, then second argument" is the classic ABBA deadlock. Use the tool built for exactly this.
+
+hint: Locking from.m then to.m deadlocks when another thread calls transfer with the arguments swapped: each thread holds one mutex and waits for the other, forever.
+hint: `std::scoped_lock lock(from.m, to.m);` locks any number of mutexes via the std::lock deadlock-avoidance algorithm — safe regardless of argument order — and releases both on scope exit.
+hint: With both locks held, the body is just `from.balance -= amount; to.balance += amount;`. (The manual alternative — locking in a globally consistent order, e.g. by address — also works, but scoped_lock is the one-liner.)
+
+```cpp
+// starter
+struct Account {
+    std::mutex m;
+    long balance = 0;
+};
+
+// Move `amount` from one account to the other, atomically.
+// transfer(a, b, ...) and transfer(b, a, ...) run at the same time —
+// your locking must not deadlock in either direction.
+void transfer(Account& from, Account& to, long amount) {
+    // TODO: take BOTH mutexes with one std::scoped_lock,
+    //       then move the money.
+}
+```
+
+```cpp
+struct Account {
+    std::mutex m;
+    long balance = 0;
+};
+
+void transfer(Account& from, Account& to, long amount) {
+    std::scoped_lock lock(from.m, to.m);  // both at once — ABBA-proof
+    from.balance -= amount;
+    to.balance   += amount;
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    Account a, b;
+    a.balance = 6000;
+    b.balance = 4000;
+    transfer(a, b, 1000);                       // single-threaded sanity
+    assert(a.balance == 5000 && b.balance == 5000);
+
+    std::thread t1([&] { for (int i = 0; i < 2000; ++i) transfer(a, b, 1); });
+    std::thread t2([&] { for (int i = 0; i < 2000; ++i) transfer(b, a, 1); });
+    t1.join();
+    t2.join();
+    assert(a.balance + b.balance == 10000);     // money conserved
+    assert(a.balance == 5000 && b.balance == 5000);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Fine-grained locking (one mutex per account) scales better than one big bank mutex — but any operation that needs *two* locks must acquire them without creating a cycle. Lock in argument order and two opposing transfers each grab their first mutex, then wait on each other forever: the ABBA deadlock, the most-asked concurrency interview question in existence. `std::scoped_lock(m1, m2, ...)` delegates to `std::lock`, which acquires the set with a try-and-back-off algorithm guaranteeing no deadlock whatever order threads name the mutexes in. The manual discipline — impose one global order, such as `&from.m < &to.m` — also works and is worth being able to write, but the variadic `scoped_lock` is the modern one-liner reviewers want to see.
+
+## challenge: fix: the hit counter comes up short
+tags: concurrency, data-race, debugging, code-review
+track: core
+difficulty: medium
+
+This code review found a bug: the nightly hit totals from `HitCounter` are always lower than the load balancer's request count — updates are being lost. The `audit_hook()` call must stay exactly where it is in the flow (compliance logs between the read and the write). Find and fix it — keep the public interface.
+
+hint: hit() is a read-modify-write in three visible steps: read hits_, run the hook, write back. What happens when two threads both read the same snapshot before either writes?
+hint: Nothing stops threads from interleaving inside hit() — this is a textbook data race (concurrent access, at least one write, no synchronization). The whole read-hook-write sequence must be one critical section.
+hint: Add a std::mutex member; take a std::lock_guard for the entire body of hit() — including the audit_hook() call — and lock in total() too (a racing read is still UB). Mark the mutex mutable for the const method.
+
+```cpp
+// starter
+// Counts requests across worker threads. audit_hook() must run
+// between reading the old count and writing the new one.
+class HitCounter {
+public:
+    void hit() {
+        long snapshot = hits_;      // read
+        audit_hook();               // compliance hook — keep this call here
+        hits_ = snapshot + 1;       // write back
+    }
+    long total() const { return hits_; }
+private:
+    long hits_ = 0;
+};
+```
+
+```cpp
+// Counts requests across worker threads. audit_hook() must run
+// between reading the old count and writing the new one.
+class HitCounter {
+public:
+    void hit() {
+        std::lock_guard<std::mutex> lock(m_);  // one thread at a time
+        long snapshot = hits_;      // read
+        audit_hook();               // still between read and write — now safe
+        hits_ = snapshot + 1;       // write back
+    }
+    long total() const {
+        std::lock_guard<std::mutex> lock(m_);
+        return hits_;
+    }
+private:
+    mutable std::mutex m_;
+    long hits_ = 0;
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+void audit_hook() { std::this_thread::yield(); }  // other threads run here
+//__USER__
+int main() {
+    HitCounter c;
+    std::vector<std::thread> workers;
+    for (int t = 0; t < 4; ++t)
+        workers.emplace_back([&c] {
+            for (int i = 0; i < 2000; ++i) c.hit();
+        });
+    for (auto& w : workers) w.join();
+    assert(c.total() == 8000);   // 4 x 2000 — every hit counted
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The race window is spelled out in the code: thread A reads `hits_ == 41`, the hook yields the CPU, threads B, C, D each read the *same* 41 and write 42, then A finally writes its own 42 — three hits gone. Any unsynchronized read-modify-write has this window; the hook only widens it from nanoseconds to a certainty. The fix is not to move the hook but to make the whole sequence a critical section: one `std::mutex`, one `std::lock_guard` spanning read, hook, and write — and the same lock in `total()`, because a read racing a write is undefined behavior even when only the write "changes" anything. If the hook constraint ever disappeared, `std::atomic<long>::fetch_add` would do the job lock-free.
+
+## challenge: fix: the deadlock fix that loses money
+tags: concurrency, deadlock, debugging, code-review
+track: core
+difficulty: hard
+
+This code review found a bug with history. Version 1 of `transfer()` locked `from.m` then `to.m` — and froze in production when two threads transferred in opposite directions: the classic ABBA deadlock. Someone "fixed" it by never holding both locks at once. The freeze is gone, but now the nightly reconciliation fails: money appears and disappears. Fix `transfer()` so it is *both* deadlock-free and atomic. `fraud_check()` must remain in the flow, and the signature stays.
+
+hint: Follow `newFrom`: it is computed from a balance read under the lock, but written back MUCH later, after the lock was dropped and retaken. What did the other thread do to from.balance in between?
+hint: The write-back `from.balance = newFrom` clobbers any concurrent deposit into `from` — a lost update. Releasing the lock mid-transaction traded a deadlock for silent corruption; the transfer must hold both mutexes across the whole thing.
+hint: `std::scoped_lock lock(from.m, to.m);` acquires both mutexes deadlock-free (std::lock algorithm), no matter that the other thread names them in the opposite order. Do the debit, the fraud_check, and the credit all under it.
+
+```cpp
+// starter
+struct Account {
+    std::mutex m;
+    long balance = 0;
+};
+
+// v1 locked from.m then to.m and DEADLOCKED under opposite-direction
+// transfers (ABBA). v2 (below) never holds both locks... but the
+// books no longer balance. Make it deadlock-free AND atomic.
+void transfer(Account& from, Account& to, long amount) {
+    from.m.lock();
+    long newFrom = from.balance - amount;   // decide the new balance
+    from.m.unlock();                        // drop the lock "to be safe"
+
+    fraud_check();                          // other transfers run here
+
+    to.m.lock();
+    to.balance += amount;                   // credit
+    to.m.unlock();
+
+    from.m.lock();
+    from.balance = newFrom;                 // write back a stale snapshot!
+    from.m.unlock();
+}
+```
+
+```cpp
+struct Account {
+    std::mutex m;
+    long balance = 0;
+};
+
+void transfer(Account& from, Account& to, long amount) {
+    std::scoped_lock lock(from.m, to.m);    // both locks, ABBA-proof
+    long newFrom = from.balance - amount;
+    fraud_check();                          // safe: still exclusive
+    to.balance += amount;
+    from.balance = newFrom;                 // snapshot can't go stale now
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+void fraud_check() { std::this_thread::yield(); }  // other transfers run here
+//__USER__
+int main() {
+    Account a, b;
+    a.balance = 1000;
+    b.balance = 1000;
+    std::thread t1([&] { for (int i = 0; i < 1500; ++i) transfer(a, b, 1); });
+    std::thread t2([&] { for (int i = 0; i < 1500; ++i) transfer(b, a, 1); });
+    t1.join();
+    t2.join();
+    assert(a.balance + b.balance == 2000);      // no money created or destroyed
+    assert(a.balance == 1000 && b.balance == 1000);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Two bugs, one lesson. The original ABBA deadlock — T1 holds `a.m` wanting `b.m`, T2 holds `b.m` wanting `a.m` — is a cycle in the lock graph, and the cure is to acquire both locks as one operation: `std::scoped_lock(from.m, to.m)` runs the `std::lock` try-and-back-off algorithm, which cannot cycle regardless of argument order (a fixed global order, e.g. by mutex address, works too). The "fix" under review made the opposite trade: by releasing `from.m` between the read and the write-back, it turned the transfer into a stale-snapshot lost update — the other thread's deposits into `from` land in the gap and are overwritten. Wrong answers to deadlocks are usually *less* locking; the right answer is *structured* locking: both mutexes, one acquisition, held for the whole invariant.
+
+## challenge: publish the payload — acquire/release
+tags: concurrency, memory-model, atomics
+track: core
+difficulty: hard
+
+The flag-and-data pair, straight from the interview canon. One writer thread calls `put(value)`; one reader thread calls `take()`, which must spin until the value is published and then return it. The payload itself is a plain `int` — only the flag is atomic — so the flag's memory orderings must carry the synchronization: everything written before the release store must be visible after the acquire load that observes it. Choose the orderings deliberately; be ready to say why `relaxed` would be wrong.
+
+hint: put() in two steps: write payload_ first, THEN `ready_.store(true, std::memory_order_release)`. The release makes every prior write part of the publication.
+hint: take() spins: `while (!ready_.load(std::memory_order_acquire)) std::this_thread::yield();` then returns payload_. The acquire load that sees true synchronizes-with the release store — creating the happens-before edge that makes reading the non-atomic payload_ legal.
+hint: With relaxed on both sides the flag itself is still atomic, but NOTHING orders payload_ against it — the reader can see ready==true yet a stale payload, and the race on payload_ is UB. seq_cst also passes (it is release/acquire plus more); relaxed does not.
+
+```cpp
+// starter
+// One-shot mailbox: one writer calls put(), one reader calls take().
+// payload_ is deliberately NOT atomic — the flag must publish it.
+class Mailbox {
+public:
+    void put(int value) {
+        payload_ = value;
+        // TODO: publish — store true into ready_ with the ordering
+        //       that makes the payload_ write visible to the reader.
+    }
+    int take() {
+        // TODO: spin (with std::this_thread::yield()) until ready_,
+        //       loading with the matching ordering, then return payload_.
+        return -1;
+    }
+private:
+    int payload_ = 0;
+    std::atomic<bool> ready_{false};
+};
+```
+
+```cpp
+class Mailbox {
+public:
+    void put(int value) {
+        payload_ = value;                                // A: write the data
+        ready_.store(true, std::memory_order_release);   // B: publish A
+    }
+    int take() {
+        while (!ready_.load(std::memory_order_acquire))  // C: observes B
+            std::this_thread::yield();
+        return payload_;                                 // D: A visible — safe
+    }
+private:
+    int payload_ = 0;
+    std::atomic<bool> ready_{false};
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    for (int round = 0; round < 300; ++round) {
+        Mailbox box;
+        int expected = round * 7 + 1;
+        std::thread writer([&box, expected] { box.put(expected); });
+        int got = box.take();
+        writer.join();
+        assert(got == expected);   // flag seen => payload must be too
+    }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The release/acquire pair is the C++ memory model in one idiom. `store(release)` says "everything I wrote before this is part of the message"; the `load(acquire)` that reads that value *synchronizes-with* it, establishing happens-before from the payload write (A) to the payload read (D) — which is precisely what makes the non-atomic `payload_` access race-free. Demote both to `relaxed` and the flag stays atomic but orders nothing: compiler and CPU may reorder A past B or D before C, and the reader can observe `ready == true` with a stale payload — undefined behavior that x86 hardware will often hide and ARM will happily expose. `seq_cst` (the default) is correct here too, since it includes acquire/release; the point of naming the orders is to show you know *which* guarantee the code actually relies on. Mutexes give the same edge implicitly: unlock releases, lock acquires.
+
 ## quiz: review: the welcome email
 tags: code-review, move-semantics
 track: core
@@ -2324,6 +3484,2561 @@ bool validOffset(int blockIndex, long long fileSize) {
 - [ ] returning `long long` from an `int` expression truncates the upper 32 bits
 
 > The multiplication happens entirely in `int`; for `blockIndex >= 32768` the product exceeds `INT_MAX`, which is signed overflow — undefined behavior that in practice yields a negative offset. Widen an operand first: `return static_cast<long long>(blockIndex) * kBlockSize;`. The `long long` return type does not help — the damage is done before the conversion. Any `int * int` assigned to a 64-bit type deserves scrutiny.
+
+## fact: Ownership is the question; RAII is the answer
+tags: smart-pointers, raii, ownership
+track: core
+
+Every heap object needs exactly one answer to the question "who deletes this, and when?" Raw `new`/`delete` leaves that answer in the programmer's head: every early `return`, thrown exception, and forgotten error path is a chance to leak, and every second `delete` on the same pointer is undefined behavior. The failure mode isn't carelessness — it is that manual cleanup must be re-proven correct on *every* exit path, forever, through every refactor.
+
+RAII (Resource Acquisition Is Initialization) moves the answer into the type system: acquire the resource in a constructor, release it in the destructor, and let the compiler insert the cleanup on every path — normal returns, exceptions, `break`, everything. Smart pointers are simply RAII applied to heap memory, with the ownership *policy* encoded in the type: `std::unique_ptr` says "exactly one owner," `std::shared_ptr` says "last owner out turns off the lights," `std::weak_ptr` says "I only observe."
+
+That is why raw `new`/`delete` died in application code: not because they are slow, but because they encode ownership nowhere. Modern guideline: raw pointers still exist, but only as non-owning observers — anything that *owns* goes in a smart pointer.
+
+```cpp
+void risky() {
+    auto buf = std::make_unique<std::vector<int>>(1024);
+    parse(*buf);          // may throw — buf still freed
+    if (!valid(*buf)) return;  // early exit — buf still freed
+}                          // normal exit — buf freed. Zero delete statements.
+```
+
+## fact: unique_ptr — ownership as a move-only type
+tags: smart-pointers, raii, unique-ptr
+track: core
+
+`std::unique_ptr<T>` is sole ownership made compilable. Copying is deleted — two `unique_ptr`s owning one object is a double delete waiting to happen, so the compiler simply rejects it. Transfer is explicit: `std::move` hands the pointer over and leaves the source null. With the default deleter it is exactly the size of a raw pointer and `operator*`/`operator->` compile to the same code, so there is no excuse not to use it.
+
+The escape hatches are precise:
+
+- `get()` — borrow the raw pointer, ownership unchanged. For passing to observers.
+- `release()` — give up ownership and return the raw pointer; the caller is now manually responsible. For handing off to C APIs.
+- `reset(p)` — destroy the current object (if any), then own `p`. `reset()` alone just destroys.
+
+Mixing up `get()` and `release()` is a classic bug: `get()` into something that deletes double-frees; `release()` into something that doesn't delete leaks.
+
+There is also an array form, `std::unique_ptr<T[]>`, which calls `delete[]` and offers `operator[]` — though `std::vector` or `std::array` is almost always the better choice.
+
+```cpp
+std::unique_ptr<Widget> a = std::make_unique<Widget>();
+// auto b = a;              // error: copy is deleted
+auto b = std::move(a);      // a is now nullptr
+Widget* view = b.get();     // borrow, b still owns
+b.reset();                  // destroyed here, deterministically
+```
+
+## fact: make_unique vs new — and the make_shared allocation myth
+tags: smart-pointers, raii, make-unique
+track: core
+
+Prefer `std::make_unique<T>(args...)` over `std::unique_ptr<T>(new T(args...))` for three reasons. First, exception safety: before C++17, an expression like `f(std::unique_ptr<T>(new T), g())` could evaluate `new T`, then run `g()`, and if `g()` threw, the not-yet-wrapped object leaked. C++17 banned that interleaving, but `make_unique` was the fix that never needed a language change. Second, greppability: a codebase using `make_unique` everywhere has *zero* naked `new` expressions, so any `new` that appears in review is automatically suspicious. Third, it says the type once instead of twice.
+
+Now the myth to unlearn: `make_unique` performs **one** allocation — exactly like `new`. There is no fusion trick, because `unique_ptr` has no control block. The famous "single allocation" optimization belongs to `std::make_shared`, which allocates the object and the shared control block in one contiguous chunk instead of two separate allocations. That is a real win — better locality, half the allocator traffic — with one subtle cost: the object's *storage* cannot be freed until the last `weak_ptr` dies too, since object and control block share one block. For huge objects outlived by long-lived `weak_ptr`s, separate allocation via `shared_ptr<T>(new T)` can actually be the right call.
+
+```cpp
+auto u = std::make_unique<Config>("a.toml");   // 1 allocation (same as new)
+auto s = std::make_shared<Config>("a.toml");   // 1 fused allocation
+std::shared_ptr<Config> t(new Config("a.toml")); // 2: object + control block
+```
+
+## fact: shared_ptr internals — the control block
+tags: smart-pointers, raii, shared-ptr
+track: core
+
+A `shared_ptr<T>` is two raw pointers wide: one to the object, one to a heap-allocated **control block**. The control block holds the *strong* count (owners), the *weak* count (observers), and, type-erased, the deleter and allocator. Copying a `shared_ptr` atomically increments the strong count; destroying one decrements it. Strong count hitting zero destroys the object; the control block itself lives on until the weak count also drains, because `weak_ptr`s need somewhere to look to answer "expired?".
+
+Two consequences follow directly. Those increments are *atomic* read-modify-writes — thread-safe, but each copy is a contended RMW plus potential cache-line ping-pong, which is why hot loops pass `const shared_ptr&` or a raw pointer instead of copying. And the count lives in the control block, not the pointer — so two `shared_ptr`s constructed independently from the same raw pointer create two control blocks, each convinced it is the sole owner: double delete.
+
+The oddest constructor is the **aliasing constructor**: `shared_ptr<M>(owner, &owner->member)` *points* at the member but shares the owner's control block, keeping the whole parent alive. `use_count()` reports the strong count; treat it as a debugging aid, not synchronization.
+
+```cpp
+auto owner = std::make_shared<Widget>();
+std::shared_ptr<int> id(owner, &owner->id); // aliasing: points at the int,
+owner.reset();                              // ...but owns the Widget
+assert(id.use_count() == 1);                // Widget still alive via id
+```
+
+## fact: weak_ptr — observing without owning
+tags: smart-pointers, raii, weak-ptr
+track: core
+
+`std::weak_ptr<T>` references a `shared_ptr`-managed object without keeping it alive. It bumps only the control block's weak count, so the object dies on schedule; the `weak_ptr` can then tell you it's gone instead of dangling. That single property solves two problems `shared_ptr` creates for itself.
+
+**Cycles.** If a parent holds `shared_ptr<Child>` and the child holds `shared_ptr<Parent>` back, each keeps the other's strong count above zero and neither destructor ever runs — a leak no tool but a heap profiler will show you. Rule: owning edges point one way (parent→child `shared_ptr`); back-edges observe (child→parent `weak_ptr`).
+
+**Caches and observers.** A cache holding `shared_ptr` pins every entry alive forever. A cache of `weak_ptr` lets entries die naturally when the last real user releases them, and `lock()` tells the cache whether a revival is needed.
+
+The access pattern is always the same and is race-free by construction: `lock()` atomically produces an owning `shared_ptr` — non-null only if the object is still alive — and you use *that*, never the `weak_ptr` directly. Checking `expired()` and then locking is a TOCTOU bug in concurrent code; just `lock()` and test.
+
+```cpp
+if (auto sp = cache_entry.lock()) {
+    use(*sp);          // alive — sp keeps it so until end of scope
+} else {
+    sp = reload();     // died — rebuild and re-cache
+}
+```
+
+## fact: enable_shared_from_this — why shared_ptr(this) double-frees
+tags: smart-pointers, raii, enable-shared-from-this
+track: core
+
+Inside a member function, `this` is a raw pointer — and sometimes the object needs to hand out shared ownership of itself: an async callback, a task queue, a subscriber list. The reflex `std::shared_ptr<Widget>(this)` is a landmine: `shared_ptr`'s raw-pointer constructor *always creates a brand-new control block*. The object is already owned by some other `shared_ptr` with its own control block; now two independent bookkeepers each hold strong count 1, and each will call `delete` when it drains. Double free.
+
+`std::enable_shared_from_this<T>` is the fix. Inherit from it (publicly — the machinery needs to see the base), and the first `shared_ptr` created for the object secretly stores a `weak_ptr` to itself inside the base. `shared_from_this()` then locks that hidden `weak_ptr`, returning a `shared_ptr` that shares the *original* control block — one owner group, correct counts.
+
+Two rules: the object must already be managed by a `shared_ptr` when you call `shared_from_this()` — calling it on a stack object or inside the constructor (before any `shared_ptr` exists) is undefined behavior pre-C++17 and throws `std::bad_weak_ptr` since. And factories help enforce this: make the constructor private and expose `static std::shared_ptr<Widget> create()`.
+
+```cpp
+struct Task : std::enable_shared_from_this<Task> {
+    void schedule(Queue& q) {
+        q.push([self = shared_from_this()] { self->run(); }); // co-owner
+    }   // NOT std::shared_ptr<Task>(this) — that double-frees
+};
+```
+
+## fact: Custom deleters — and the pImpl connection
+tags: smart-pointers, raii, deleters
+track: core
+
+Smart pointers manage more than memory: anything with an acquire/release pair — `FILE*`, sockets, C library handles — fits, via a custom deleter. The two pointer types treat deleters very differently.
+
+For `unique_ptr` the deleter is part of the **type**: `std::unique_ptr<FILE, decltype(&fclose)>` and `std::unique_ptr<FILE>` are unrelated types. A function-pointer deleter also doubles the size (the pointer must be stored). Prefer a stateless functor — `struct FCloser { void operator()(FILE* f) const { fclose(f); } };` — which empty-base-optimizes away, keeping the handle pointer-sized and the deleter un-forgettable.
+
+For `shared_ptr` the deleter is **type-erased into the control block**: `std::shared_ptr<FILE>(fopen(...), &fclose)` is just `shared_ptr<FILE>`. Different deleters, same type — flexible, at the cost of the control block indirection.
+
+The deleter-is-part-of-the-type fact powers the pImpl idiom: `std::unique_ptr<Impl> impl_` with `Impl` forward-declared compiles fine, *until* something instantiates the deleter — which requires `Impl` to be complete. The compiler-generated destructor in the header does exactly that. The fix is one line of ritual: declare `~Widget();` in the header, define `Widget::~Widget() = default;` in the .cpp after `Impl`'s full definition. Same for the move operations.
+
+```cpp
+struct FCloser { void operator()(FILE* f) const { std::fclose(f); } };
+using FilePtr = std::unique_ptr<FILE, FCloser>;   // still pointer-sized
+FilePtr open_log() { return FilePtr(std::fopen("log.txt", "r")); }
+```
+
+## fact: API design — sinks, observers, and when NOT to use shared_ptr
+tags: smart-pointers, raii, api-design
+track: core
+
+Smart pointers in signatures are ownership statements — so only put one there when the function participates in ownership.
+
+**Sink**: take `std::unique_ptr<T>` *by value*. The caller must `std::move` in, the transfer is visible at the call site, and the signature is honest: "I consume this." **Factory**: return `std::unique_ptr<T>` by value — cheap (a pointer move), and it converts implicitly to `shared_ptr<T>` if the caller wants sharing, so returning `unique_ptr` never forecloses anything. Returning `shared_ptr` does: you cannot go back. **Observer**: a function that just *uses* the object takes `T&` (never null) or `T*` (maybe null) — never a smart pointer. Passing `shared_ptr` by value here costs two atomic RMWs and, worse, lies about the contract. `const shared_ptr<T>&` is only for functions that might *copy* the pointer conditionally.
+
+`shared_ptr` is the correct tool only when lifetime is genuinely unknowable at design time — multiple independent consumers, any of which may be last to finish. That is rarer than it looks. Reaching for it "to be safe" buys atomic traffic, control-block allocations, cycle risk, and — the real cost — code where *nobody* can say who owns what. Default to `unique_ptr`; escalate to `shared_ptr` only under evidence.
+
+```cpp
+std::unique_ptr<Conn> make_conn(Config);      // factory
+void adopt(std::unique_ptr<Conn> c);          // sink: caller moves in
+void log_stats(const Conn& c);                // observer: no ownership
+```
+
+## challenge: build a tiny UniquePtr from scratch
+tags: smart-pointers, raii
+track: core
+difficulty: medium
+
+Implement `UniquePtr<T>`: sole ownership of a heap object, destroyed exactly once, transferable only by move. Fill in the destructor, the move operations, `release()` and `reset()`, and make copying impossible. The harness counts constructions and destructions of a probe type — every leak, double delete, or accidental copy shows up as a wrong count.
+
+hint: The move constructor must steal `other.ptr_` AND leave `other.ptr_` null — otherwise two objects both delete it.
+hint: Move assignment has to destroy whatever `*this` currently owns before stealing; guard against self-assignment. `release()` gives the pointer up without deleting; `reset()` deletes then takes.
+hint: Declaring move operations already suppresses the copies, but write `UniquePtr(const UniquePtr&) = delete;` (and same for copy assignment) explicitly — ownership types should say it out loud. `delete` on nullptr is a safe no-op, so the destructor needs no if.
+
+```cpp
+// starter
+template <typename T>
+class UniquePtr {
+public:
+    UniquePtr() = default;
+    explicit UniquePtr(T* p) : ptr_(p) {}
+
+    // TODO: destructor — destroy the owned object (delete on nullptr is fine).
+    ~UniquePtr() {}
+
+    // TODO: forbid copy construction and copy assignment explicitly.
+
+    // TODO: move constructor — steal other's pointer, leave other empty.
+    UniquePtr(UniquePtr&& other) noexcept {}
+
+    // TODO: move assignment — destroy what we own, then steal other's pointer.
+    UniquePtr& operator=(UniquePtr&& other) noexcept { return *this; }
+
+    T* get() const { return ptr_; }
+    T& operator*() const { return *ptr_; }
+    T* operator->() const { return ptr_; }
+
+    // TODO: release() — give up ownership; return the raw pointer, own nothing.
+    T* release() { return nullptr; }
+
+    // TODO: reset(p) — destroy what we own, then own p.
+    void reset(T* p = nullptr) {}
+
+private:
+    T* ptr_ = nullptr;
+};
+```
+
+```cpp
+template <typename T>
+class UniquePtr {
+public:
+    UniquePtr() = default;
+    explicit UniquePtr(T* p) : ptr_(p) {}
+
+    ~UniquePtr() { delete ptr_; }
+
+    UniquePtr(const UniquePtr&) = delete;
+    UniquePtr& operator=(const UniquePtr&) = delete;
+
+    UniquePtr(UniquePtr&& other) noexcept : ptr_(other.ptr_) {
+        other.ptr_ = nullptr;
+    }
+
+    UniquePtr& operator=(UniquePtr&& other) noexcept {
+        if (this != &other) {
+            delete ptr_;
+            ptr_ = other.ptr_;
+            other.ptr_ = nullptr;
+        }
+        return *this;
+    }
+
+    T* get() const { return ptr_; }
+    T& operator*() const { return *ptr_; }
+    T* operator->() const { return ptr_; }
+
+    T* release() {
+        T* p = ptr_;
+        ptr_ = nullptr;
+        return p;
+    }
+
+    void reset(T* p = nullptr) {
+        delete ptr_;
+        ptr_ = p;
+    }
+
+private:
+    T* ptr_ = nullptr;
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+struct Probe {
+    inline static int alive = 0;
+    inline static int destroyed = 0;
+    int v;
+    explicit Probe(int x) : v(x) { ++alive; }
+    ~Probe() { ++destroyed; --alive; }
+};
+
+int main() {
+    {
+        UniquePtr<Probe> p(new Probe(7));
+        assert(p.get() != nullptr);
+        assert((*p).v == 7);
+        assert(p->v == 7);
+        assert(Probe::alive == 1);
+
+        UniquePtr<Probe> q(std::move(p));   // move ctor: steal, no copy
+        assert(p.get() == nullptr);
+        assert(q->v == 7);
+        assert(Probe::alive == 1);
+
+        UniquePtr<Probe> r(new Probe(9));
+        assert(Probe::alive == 2);
+        r = std::move(q);                   // move assign: old 9 destroyed
+        assert(Probe::alive == 1);
+        assert(Probe::destroyed == 1);
+        assert(q.get() == nullptr);
+        assert(r->v == 7);
+
+        Probe* raw = r.release();           // ownership given up, no delete
+        assert(r.get() == nullptr);
+        assert(Probe::alive == 1);
+        delete raw;
+        assert(Probe::alive == 0);
+
+        r.reset(new Probe(3));
+        assert(r->v == 3);
+        assert(Probe::alive == 1);
+        r.reset();                          // reset() destroys
+        assert(Probe::alive == 0);
+    }
+    assert(Probe::alive == 0);
+    assert(Probe::destroyed == 3);          // 7, 9, 3 — each exactly once
+    static_assert(!std::is_copy_constructible_v<UniquePtr<Probe>>,
+                  "UniquePtr must not be copyable");
+    static_assert(!std::is_copy_assignable_v<UniquePtr<Probe>>,
+                  "UniquePtr must not be copy-assignable");
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The whole exercise is the ownership invariant: at any moment, exactly one `UniquePtr` believes it owns the pointer. Every member is a small proof obligation against it. The move constructor must null out the source — copying the pointer without nulling leaves two owners and a double delete at scope exit. Move assignment must first `delete ptr_` (else the old object leaks) and guard `this != &other` (else self-move deletes the object it is about to steal). `release()` is the deliberate hole in RAII — ownership exits the type system, so the harness has to `delete` manually — while `reset()` re-enters it. Note the asymmetry: `release()` never deletes, `reset()` always does. Declaring the move operations already makes the class non-copyable (implicit copies are suppressed), but real ownership types spell out `= delete` so the intent survives refactoring. This is, minus the deleter parameter and a few conveniences, exactly `std::unique_ptr` — pointer-sized, zero overhead, and the reason manual `delete` disappeared from modern C++.
+
+## challenge: unique_ptr for a C-style handle
+tags: smart-pointers, raii
+track: core
+difficulty: easy
+
+A legacy C-style API hands out `DataFile*` handles that must be released with `df_close` — never plain `delete`. Wrap it: make `FileHandle` a `std::unique_ptr` that calls `df_close` automatically, and keep it pointer-sized (a stateless deleter, not a function pointer). The harness verifies `df_close` runs exactly once per open, at the right moments.
+
+hint: `std::unique_ptr<T, D>` takes the deleter as a second template parameter; the default one calls `delete`, which skips `df_close` entirely.
+hint: A function pointer deleter (`void(*)(DataFile*)`) works but doubles `sizeof(FileHandle)` — the pointer must be stored. The harness checks the size.
+hint: Write a stateless functor: `struct DfCloser { void operator()(DataFile* f) const { df_close(f); } };` then `using FileHandle = std::unique_ptr<DataFile, DfCloser>;` — empty deleters take no space.
+
+```cpp
+// starter
+// Legacy C-style API: every df_open must be paired with exactly one df_close.
+struct DataFile { int id; };
+inline int g_open_count = 0;
+inline int g_close_count = 0;
+
+DataFile* df_open(int id) { ++g_open_count; return new DataFile{id}; }
+int df_read(const DataFile* f) { return f->id * 10; }
+void df_close(DataFile* f) { ++g_close_count; delete f; }
+
+// TODO: FileHandle must call df_close (not plain delete) when it dies,
+// and stay the size of a raw pointer. This alias is wrong on both counts:
+using FileHandle = std::unique_ptr<DataFile>;
+
+FileHandle open_file(int id) {
+    return FileHandle(df_open(id));
+}
+```
+
+```cpp
+// Legacy C-style API: every df_open must be paired with exactly one df_close.
+struct DataFile { int id; };
+inline int g_open_count = 0;
+inline int g_close_count = 0;
+
+DataFile* df_open(int id) { ++g_open_count; return new DataFile{id}; }
+int df_read(const DataFile* f) { return f->id * 10; }
+void df_close(DataFile* f) { ++g_close_count; delete f; }
+
+// Stateless functor deleter: no storage cost, impossible to forget.
+struct DfCloser {
+    void operator()(DataFile* f) const { df_close(f); }
+};
+using FileHandle = std::unique_ptr<DataFile, DfCloser>;
+
+FileHandle open_file(int id) {
+    return FileHandle(df_open(id));
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    {
+        FileHandle f = open_file(7);
+        assert(f != nullptr);
+        assert(g_open_count == 1);
+        assert(df_read(f.get()) == 70);     // borrow via get(), no transfer
+        assert(g_close_count == 0);
+
+        FileHandle g = std::move(f);        // ownership moves; still no close
+        assert(!f);
+        assert(g_close_count == 0);
+        assert(df_read(g.get()) == 70);
+    }                                       // g dies -> df_close, exactly once
+    assert(g_open_count == 1);
+    assert(g_close_count == 1);
+
+    {
+        FileHandle a = open_file(1);
+        FileHandle b = open_file(2);
+        a = std::move(b);                   // a's old file closed immediately
+        assert(g_close_count == 2);
+    }                                       // remaining handle closed
+    assert(g_open_count == 3);
+    assert(g_close_count == 3);
+
+    // Stateless functor deleter keeps the handle pointer-sized.
+    static_assert(sizeof(FileHandle) == sizeof(DataFile*),
+                  "use a stateless deleter, not a function pointer");
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The starter's `std::unique_ptr<DataFile>` uses the default deleter — plain `delete` — so memory is reclaimed but `df_close` never runs: the close counter stays at zero, which in real code means leaked descriptors, unflushed buffers, or a resource the library thinks is still checked out. The deleter is part of `unique_ptr`'s *type*, supplied as the second template parameter. A function pointer (`std::unique_ptr<DataFile, void(*)(DataFile*)>`) works but must be stored per-handle, doubling the size and allowing a wrong function to be passed at each construction site. The stateless functor is the idiomatic form: `DfCloser` is an empty type, so the empty-base optimization inside `unique_ptr` makes the handle exactly pointer-sized, and the correct release function is welded into the type — no construction site can get it wrong. This pattern (`FILE*`/`fclose`, `SSL*`/`SSL_free`, `sqlite3*`/`sqlite3_close`) is the standard way to give any C API automatic, exception-safe cleanup. Note what the harness demonstrates along the way: moves transfer the obligation without triggering it, and move-assignment closes the destination's old handle immediately.
+
+## challenge: pImpl with unique_ptr
+tags: smart-pointers, raii
+track: core
+difficulty: medium
+
+`Tracker` hides its state behind the pImpl idiom: the class body holds only `std::unique_ptr<Impl>` with `Impl` merely forward-declared, and every member is defined out of line, after `Impl` is complete. Implement `Impl` (running sum and sample count) and the member functions — including working move operations. The harness checks the arithmetic, that moves carry the state over, and that the class is (correctly) non-copyable.
+
+hint: `Impl` needs the sum and the number of samples; the constructor should `std::make_unique<Impl>()`.
+hint: The destructor and move operations can all be `= default` — but only in a spot where `Impl` is a complete type. That placement is the entire pImpl trick: `unique_ptr<Impl>`'s deleter instantiates there.
+hint: Defaulted move operations on a `unique_ptr` member do the right thing: the impl pointer transfers, the source is left empty, and move-assign releases the target's old Impl.
+
+```cpp
+// starter
+// Public interface: no data members visible except one opaque pointer.
+class Tracker {
+public:
+    Tracker();
+    ~Tracker();
+    Tracker(Tracker&& other) noexcept;
+    Tracker& operator=(Tracker&& other) noexcept;
+
+    void add(int x);        // record a sample
+    int total() const;      // sum of all samples
+    int count() const;      // number of samples
+
+private:
+    struct Impl;            // incomplete here — that's the point
+    std::unique_ptr<Impl> impl_;
+};
+
+// TODO: define Tracker::Impl with the state (sum, sample count).
+struct Tracker::Impl { /* TODO */ };
+
+Tracker::Tracker() : impl_(std::make_unique<Impl>()) {}
+Tracker::~Tracker() = default;
+
+// TODO: make the move operations actually move the impl over.
+Tracker::Tracker(Tracker&& other) noexcept : impl_(nullptr) {}
+Tracker& Tracker::operator=(Tracker&& other) noexcept { return *this; }
+
+// TODO: implement through impl_.
+void Tracker::add(int x) {}
+int Tracker::total() const { return 0; }
+int Tracker::count() const { return 0; }
+```
+
+```cpp
+// Public interface: no data members visible except one opaque pointer.
+class Tracker {
+public:
+    Tracker();
+    ~Tracker();
+    Tracker(Tracker&& other) noexcept;
+    Tracker& operator=(Tracker&& other) noexcept;
+
+    void add(int x);        // record a sample
+    int total() const;      // sum of all samples
+    int count() const;      // number of samples
+
+private:
+    struct Impl;            // incomplete here — that's the point
+    std::unique_ptr<Impl> impl_;
+};
+
+struct Tracker::Impl {
+    int sum = 0;
+    int samples = 0;
+};
+
+// All special members defined AFTER Impl is complete: unique_ptr's deleter
+// is instantiated here, where it can see ~Impl.
+Tracker::Tracker() : impl_(std::make_unique<Impl>()) {}
+Tracker::~Tracker() = default;
+Tracker::Tracker(Tracker&& other) noexcept = default;
+Tracker& Tracker::operator=(Tracker&& other) noexcept = default;
+
+void Tracker::add(int x) {
+    impl_->sum += x;
+    ++impl_->samples;
+}
+int Tracker::total() const { return impl_->sum; }
+int Tracker::count() const { return impl_->samples; }
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    Tracker t;
+    t.add(5);
+    t.add(7);
+    assert(t.total() == 12);
+    assert(t.count() == 2);
+
+    Tracker u = std::move(t);       // move ctor: impl pointer transfers
+    u.add(3);
+    assert(u.total() == 15);
+    assert(u.count() == 3);
+
+    Tracker v;
+    v.add(100);
+    v = std::move(u);               // move assign: v's old impl released
+    assert(v.total() == 15);
+    assert(v.count() == 3);
+
+    // unique_ptr member => moves only, no copies. That is the correct
+    // default for a pImpl class.
+    static_assert(!std::is_copy_constructible_v<Tracker>,
+                  "pImpl with unique_ptr is move-only");
+    static_assert(!std::is_copy_assignable_v<Tracker>,
+                  "pImpl with unique_ptr is move-only");
+    static_assert(std::is_nothrow_move_constructible_v<Tracker>);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** pImpl trades one indirection for a compile-time firewall: the header exposes nothing but a forward declaration and a `unique_ptr`, so `Impl` can change freely without recompiling users. The load-bearing subtlety is *where* the special members are defined. `std::unique_ptr<Impl>` happily exists with an incomplete `Impl` — but destroying (or move-assigning) it instantiates the deleter, which calls `delete` on an `Impl*` and therefore demands the complete type. If you let the compiler generate `~Tracker` implicitly in the class body, that instantiation happens in the header, where `Impl` is still incomplete — a hard error (or worse, in sloppier setups, UB from deleting an incomplete type). Hence the ritual: declare `~Tracker();` in the class, write `Tracker::~Tracker() = default;` after `Impl`'s definition. Same for both move operations. Once placed correctly, `= default` does everything: moving a `Tracker` just moves the impl pointer (nothrow, pointer-cheap), and move-assignment automatically releases the target's old `Impl`. Copyability is gone because `unique_ptr` is move-only — the right default; if deep copies are wanted, you write them deliberately by cloning the `Impl`.
+
+## challenge: factory returns unique_ptr, observers peek via get()
+tags: smart-pointers, raii
+track: core
+difficulty: easy
+
+Implement two functions around a small shape hierarchy: `makeShape` — a factory returning `std::unique_ptr<Shape>` owning the requested derived type — and `circleRadius`, which reports the radius *if* the pointee happens to be a `Circle`, without ever taking or transferring ownership. The harness checks the factory's products and that inspecting a shape leaves the caller's `unique_ptr` untouched.
+
+hint: The factory: `std::make_unique<Circle>(dim)` converts implicitly to `std::unique_ptr<Shape>` — upcasting owning pointers is free. Unknown kinds return `nullptr` (a default-constructed unique_ptr).
+hint: `circleRadius` only observes. Borrow the raw pointer with `s.get()` — do not `release()`, do not copy the unique_ptr (it won't compile, which is the type doing its job).
+hint: Downcast the borrowed pointer with `dynamic_cast<const Circle*>(s.get())`; it yields `nullptr` for non-circles, which maps to the -1.0 return.
+
+```cpp
+// starter
+struct Shape {
+    virtual ~Shape() = default;
+    virtual std::string name() const = 0;
+};
+
+struct Circle : Shape {
+    double radius;
+    explicit Circle(double r) : radius(r) {}
+    std::string name() const override { return "circle"; }
+};
+
+struct Square : Shape {
+    double side;
+    explicit Square(double s) : side(s) {}
+    std::string name() const override { return "square"; }
+};
+
+// TODO: "circle" -> owning pointer to Circle(dim); "square" -> Square(dim);
+// anything else -> nullptr.
+std::unique_ptr<Shape> makeShape(const std::string& kind, double dim) {
+    return nullptr;
+}
+
+// TODO: if s currently points at a Circle, return its radius, else -1.0.
+// Only LOOK at the object — ownership must stay with the caller.
+double circleRadius(const std::unique_ptr<Shape>& s) {
+    return -1.0;
+}
+```
+
+```cpp
+struct Shape {
+    virtual ~Shape() = default;
+    virtual std::string name() const = 0;
+};
+
+struct Circle : Shape {
+    double radius;
+    explicit Circle(double r) : radius(r) {}
+    std::string name() const override { return "circle"; }
+};
+
+struct Square : Shape {
+    double side;
+    explicit Square(double s) : side(s) {}
+    std::string name() const override { return "square"; }
+};
+
+std::unique_ptr<Shape> makeShape(const std::string& kind, double dim) {
+    if (kind == "circle") return std::make_unique<Circle>(dim);
+    if (kind == "square") return std::make_unique<Square>(dim);
+    return nullptr;
+}
+
+double circleRadius(const std::unique_ptr<Shape>& s) {
+    // Borrow, then downcast the borrowed pointer. Ownership never moves.
+    if (const auto* c = dynamic_cast<const Circle*>(s.get())) {
+        return c->radius;
+    }
+    return -1.0;
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    auto c = makeShape("circle", 2.5);
+    assert(c != nullptr);
+    assert(c->name() == "circle");
+    assert(circleRadius(c) == 2.5);
+    assert(c != nullptr);               // inspection must not steal ownership
+    assert(c->name() == "circle");      // object still alive and intact
+
+    auto s = makeShape("square", 4.0);
+    assert(s != nullptr);
+    assert(s->name() == "square");
+    assert(circleRadius(s) == -1.0);    // not a circle
+    assert(s != nullptr);
+
+    assert(makeShape("triangle", 1.0) == nullptr);
+
+    // The factory's unique_ptr<Shape> still runs ~Circle: virtual dtor + RAII.
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Two idioms meet here. The factory returns `std::unique_ptr<Shape>` by value: `make_unique<Circle>` produces a `unique_ptr<Circle>` that converts implicitly to `unique_ptr<Shape>` (owning pointers upcast as freely as raw ones), the return is a cheap pointer move, and the caller owns the result with zero ambiguity — this is the canonical modern factory signature, and it beats returning `shared_ptr` because a `unique_ptr` can always become shared later, never the reverse. Destruction stays correct because `Shape` has a virtual destructor; without it, deleting a `Circle` through `unique_ptr<Shape>` would be UB — smart pointers automate the *call* to delete, not its correctness. The second idiom is observation: `circleRadius` needs to look at the object, possibly as its dynamic type, but has no business owning it. `get()` is exactly this borrow — the raw pointer as a non-owning view — and `dynamic_cast` on that raw pointer gives the checked downcast, returning `nullptr` for non-circles. The tempting wrong moves both fail loudly: copying the `unique_ptr` doesn't compile, and `release()` would silently transfer ownership into a function that never deletes, leaking the shape. Raw pointers didn't die in modern C++; they just got demoted to observers.
+
+## challenge: hand out a member with the aliasing constructor
+tags: smart-pointers, raii
+track: core
+difficulty: medium
+
+A `Car` owns its `Engine` by value — the engine is a member, not a separate allocation. Implement `engineOf`, which returns a `std::shared_ptr<Engine>` pointing at `car->engine` that *shares ownership of the whole Car*: as long as anyone holds the engine pointer, the car must stay alive, and the car is destroyed only when the last engine handle drops. The harness tracks the Car's lifetime to verify exactly that.
+
+hint: `std::shared_ptr<Engine>(&car->engine)` compiles and is a disaster: a brand-new control block now thinks it owns a raw `Engine*` into the middle of a Car, and will `delete` it. You need to share the CAR's control block.
+hint: This is the aliasing constructor: `std::shared_ptr<M>(owner, ptr)` — first argument says whose lifetime to share, second says where to point. The two are allowed to differ; that's its entire purpose.
+hint: `return std::shared_ptr<Engine>(car, &car->engine);` — use_count of the result counts owners of the Car's control block.
+
+```cpp
+// starter
+struct Engine {
+    int horsepower = 90;
+};
+
+struct Car {
+    inline static int alive = 0;
+    Engine engine;                  // owned by value — not its own allocation
+    Car() { ++alive; }
+    ~Car() { --alive; }
+};
+
+// TODO: return a shared_ptr that POINTS at car->engine but shares ownership
+// of the whole Car, keeping it alive as long as the engine is referenced.
+std::shared_ptr<Engine> engineOf(const std::shared_ptr<Car>& car) {
+    return {};
+}
+```
+
+```cpp
+struct Engine {
+    int horsepower = 90;
+};
+
+struct Car {
+    inline static int alive = 0;
+    Engine engine;                  // owned by value — not its own allocation
+    Car() { ++alive; }
+    ~Car() { --alive; }
+};
+
+std::shared_ptr<Engine> engineOf(const std::shared_ptr<Car>& car) {
+    // Aliasing constructor: share ownership of *car, point at car->engine.
+    return std::shared_ptr<Engine>(car, &car->engine);
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    std::shared_ptr<Engine> e;
+    {
+        auto car = std::make_shared<Car>();
+        assert(Car::alive == 1);
+
+        e = engineOf(car);
+        assert(e != nullptr);
+        assert(e.get() == &car->engine);    // points INTO the car
+        assert(e->horsepower == 90);
+        assert(e.use_count() == 2);         // e and car share ONE control block
+        assert(car.use_count() == 2);
+    }                                       // last Car-typed handle gone...
+    assert(Car::alive == 1);                // ...but the engine handle keeps
+    assert(e->horsepower == 90);            //    the whole Car alive
+    e.reset();                              // last owner drops
+    assert(Car::alive == 0);                // now the Car is destroyed
+    std::puts("PASS");
+}
+```
+
+**Editorial:** A `shared_ptr` carries two pointers: the one you see (`get()`) and the control block that decides lifetime. Normally they refer to the same object, but the aliasing constructor `shared_ptr<M>(owner, ptr)` deliberately splits them: the result co-owns whatever `owner` owns, while pointing wherever `ptr` says. That is precisely the shape of "hand out a piece of a shared aggregate": the engine is a by-value member with no allocation of its own, so its lifetime *is* the car's, and the only correct way to share it is to share the car. The harness pins the semantics down: after the local `car` handle dies, `Car::alive` is still 1 — the engine handle alone holds the car — and only `e.reset()` finally destroys it. Also note `e.use_count() == 2`: use_count reports owners of the shared control block, regardless of what the pointer aims at. The naive `std::shared_ptr<Engine>(&car->engine)` creates a *second* control block owning a pointer into the middle of another object; when it drains, it calls `delete` on memory that was never allocated alone — heap corruption. Aliasing shows up all over real code: exposing a field of a shared config, a node of a shared document tree, or a subobject of a pooled resource.
+
+## challenge: memo cache that doesn't pin its entries
+tags: smart-pointers, raii
+track: core
+difficulty: medium
+
+`TextureCache::get(name)` must return a shared texture: if a previously returned texture for that name is still alive *anywhere*, return that same object without loading again; if every user has released it, load it fresh and re-cache. The cache itself must never keep a texture alive — that's why the map stores `std::weak_ptr`. The harness counts loads and checks object identity through both phases.
+
+hint: `cache_[name]` gives you the weak slot (creating an empty one on first use). A `weak_ptr` can't be dereferenced — convert it to an owning pointer first.
+hint: `slot.lock()` returns a `shared_ptr`: non-null means the texture is still alive somewhere — return it, no load. Null means it expired (or was never loaded).
+hint: On a miss, `std::make_shared<Texture>(name)`, assign it into the weak slot (shared-to-weak assignment just works), and return the shared_ptr — the CALLER becomes the owner, the cache only observes.
+
+```cpp
+// starter
+struct Texture {
+    inline static int loads = 0;    // counts real (re)loads
+    std::string name;
+    explicit Texture(std::string n) : name(std::move(n)) { ++loads; }
+};
+
+class TextureCache {
+public:
+    // TODO: if a texture for `name` is still alive, return that same object
+    // (no new load). Otherwise load it, remember it weakly, return it.
+    std::shared_ptr<Texture> get(const std::string& name) {
+        return std::make_shared<Texture>(name);   // always reloads — wrong
+    }
+
+private:
+    // weak_ptr on purpose: the cache must not keep textures alive.
+    std::unordered_map<std::string, std::weak_ptr<Texture>> cache_;
+};
+```
+
+```cpp
+struct Texture {
+    inline static int loads = 0;    // counts real (re)loads
+    std::string name;
+    explicit Texture(std::string n) : name(std::move(n)) { ++loads; }
+};
+
+class TextureCache {
+public:
+    std::shared_ptr<Texture> get(const std::string& name) {
+        std::weak_ptr<Texture>& slot = cache_[name];
+        if (std::shared_ptr<Texture> existing = slot.lock()) {
+            return existing;                    // still alive: same object
+        }
+        auto fresh = std::make_shared<Texture>(name);
+        slot = fresh;                           // observe, don't own
+        return fresh;
+    }
+
+private:
+    // weak_ptr on purpose: the cache must not keep textures alive.
+    std::unordered_map<std::string, std::weak_ptr<Texture>> cache_;
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    TextureCache cache;
+
+    auto a = cache.get("grass");
+    assert(a != nullptr);
+    assert(a->name == "grass");
+    assert(Texture::loads == 1);
+
+    auto b = cache.get("grass");        // alive -> the very same object
+    assert(b == a);
+    assert(Texture::loads == 1);
+
+    auto c = cache.get("rock");         // different key -> real load
+    assert(c != a);
+    assert(Texture::loads == 2);
+
+    a.reset();
+    b.reset();                          // last "grass" owner gone -> expires
+    auto d = cache.get("grass");        // must reload
+    assert(Texture::loads == 3);
+    assert(d->name == "grass");
+
+    auto e = cache.get("rock");         // c still owns it -> cached hit
+    assert(e == c);
+    assert(Texture::loads == 3);
+
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The design question in any cache is who owns the entries. Store `shared_ptr` and the cache is an owner: every texture ever requested stays resident until the cache is torn down — for assets, that's an unbounded memory pin dressed up as an optimization. Storing `weak_ptr` inverts it: the *users* own textures; the cache merely remembers where the live ones are. `lock()` is the pivot — it atomically checks liveness and, in the same operation, produces an owning `shared_ptr`, so the object can't die between the check and the use (the `expired()`-then-`lock()` two-step is a TOCTOU bug in concurrent code; lock once and test the result). The lifecycle in the harness is the whole contract: while `a`/`b` hold "grass", repeat lookups return the identical object with no load; when both release, the weak slot expires and the next `get` pays for a reload — deduplication while hot, natural eviction when cold. One production refinement worth knowing: expired `weak_ptr`s linger as map entries until overwritten, so long-running caches occasionally sweep (`erase` entries where `slot.expired()`). Same pattern, same reasoning, powers interned strings, connection registries, and observer lists that must not extend subscriber lifetimes.
+
+## challenge: fix: the parent-child pair that never dies
+tags: smart-pointers, raii
+track: core
+difficulty: easy
+
+This code review found a leak: a parent node and its child are both managed by `shared_ptr`, but once the caller drops the family, *neither destructor ever runs* and memory climbs forever. Keep the back-pointer functional — `parentOf` must still find a child's parent — but make the pair actually die. The harness counts live nodes.
+
+hint: Draw the ownership arrows. parent owns child (shared_ptr), child owns parent (shared_ptr) — each keeps the other's strong count at 1 even after every outside handle is gone.
+hint: Owning edges must not form a loop. The parent -> child edge is real ownership; the child -> parent edge is only navigation. One of them should stop owning.
+hint: Make `parent` a `std::weak_ptr<Node>` — assignment from a shared_ptr works unchanged — and have `parentOf` return `n.parent.lock()`.
+
+```cpp
+// starter
+struct Node {
+    inline static int alive = 0;
+    std::shared_ptr<Node> child;
+    std::shared_ptr<Node> parent;   // owning back-edge — completes a cycle
+    Node() { ++alive; }
+    ~Node() { --alive; }
+};
+
+// Builds: parent <-> child, returns the parent.
+std::shared_ptr<Node> makeFamily() {
+    auto parent = std::make_shared<Node>();
+    auto child = std::make_shared<Node>();
+    parent->child = child;
+    child->parent = parent;
+    return parent;
+}
+
+// Navigation helper: a node's parent, or nullptr at the root.
+std::shared_ptr<Node> parentOf(const Node& n) {
+    return n.parent;
+}
+```
+
+```cpp
+struct Node {
+    inline static int alive = 0;
+    std::shared_ptr<Node> child;    // ownership points DOWN the tree
+    std::weak_ptr<Node> parent;     // navigation points up — non-owning
+    Node() { ++alive; }
+    ~Node() { --alive; }
+};
+
+// Builds: parent <-> child, returns the parent.
+std::shared_ptr<Node> makeFamily() {
+    auto parent = std::make_shared<Node>();
+    auto child = std::make_shared<Node>();
+    parent->child = child;
+    child->parent = parent;         // shared -> weak assignment, unchanged
+    return parent;
+}
+
+// Navigation helper: a node's parent, or nullptr at the root.
+std::shared_ptr<Node> parentOf(const Node& n) {
+    return n.parent.lock();
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    {
+        auto family = makeFamily();
+        assert(Node::alive == 2);
+
+        // The back-pointer must still navigate correctly.
+        assert(family->child != nullptr);
+        assert(parentOf(*family->child).get() == family.get());
+        assert(parentOf(*family) == nullptr);   // root has no parent
+    }
+    // Once the last outside handle is gone, BOTH nodes must be destroyed.
+    // A shared_ptr cycle keeps alive == 2 here forever.
+    assert(Node::alive == 0);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Reference counting has exactly one blind spot, and this is it. When `family` goes out of scope the parent's strong count drops to 1 — the child's `parent` member still owns it — and the child's count is 1 via the parent's `child` member. Two objects, each waiting for the other's destructor to release it: nothing dangles, nothing crashes, the pair is simply unreachable and immortal. `Node::alive` stays 2, which is why leak checks in tests are worth their weight. The fix is a design rule, not a trick: decide which edges *own* and make every other edge an observer. In a tree, ownership flows downward — parents own children — so the upward pointer becomes `weak_ptr<Node>`. Construction code doesn't change (assigning a `shared_ptr` into a `weak_ptr` is implicit), and navigation becomes `parent.lock()`, which returns an owning handle while you use it or `nullptr` if the parent died first — the root case falls out for free from a default-constructed `weak_ptr`. The same shape recurs everywhere `shared_ptr` is used bidirectionally: observers pointing back at subjects, children at parents, cache entries at caches. If two `shared_ptr`s can reach each other, one of them is a bug.
+
+## challenge: a worker that schedules itself — and survives it
+tags: smart-pointers, raii
+track: core
+difficulty: hard
+
+`Worker::scheduleOn(q)` pushes a task that will call `doWork()` later — possibly after the caller has dropped every external `shared_ptr` to the worker. Each queued task must therefore co-own the worker, sharing the *original* control block (a fresh `std::shared_ptr(this)` would double-free). Fix the class so it can mint owning handles to itself. The harness drops the external handle before running the queue and checks the worker lives exactly as long as its pending tasks.
+
+hint: The starter's lambda captures raw `this` — zero ownership, so the worker is destroyed the moment the caller's shared_ptr dies, and the queued task would call into a corpse. The harness catches it earlier: use_count never rises.
+hint: `std::shared_ptr<Worker>(this)` is the trap, not the fix — the raw-pointer constructor always builds a NEW control block, giving the object two independent owner groups and two deletes.
+hint: Inherit publicly from `std::enable_shared_from_this<Worker>` and capture `self = shared_from_this()` in the lambda. Requirement: the object must already be owned by a shared_ptr when you call it (the harness's make_shared satisfies that).
+
+```cpp
+// starter
+class TaskQueue {
+public:
+    void push(std::function<void()> f) { tasks_.push_back(std::move(f)); }
+    void runAll() {
+        auto pending = std::move(tasks_);
+        tasks_.clear();
+        for (auto& f : pending) f();
+    }   // pending (and the captures inside) destroyed here
+private:
+    std::vector<std::function<void()>> tasks_;
+};
+
+class Worker {
+public:
+    inline static int alive = 0;
+    inline static int runs = 0;
+    Worker() { ++alive; }
+    ~Worker() { --alive; }
+
+    // TODO: the queued task must CO-OWN this Worker so it stays alive until
+    // the task has run — even if the caller drops every external handle.
+    // Capturing raw `this` owns nothing. shared_ptr<Worker>(this) double-frees.
+    void scheduleOn(TaskQueue& q) {
+        q.push([this] { doWork(); });
+    }
+
+    void doWork() { ++runs; }
+};
+```
+
+```cpp
+class TaskQueue {
+public:
+    void push(std::function<void()> f) { tasks_.push_back(std::move(f)); }
+    void runAll() {
+        auto pending = std::move(tasks_);
+        tasks_.clear();
+        for (auto& f : pending) f();
+    }   // pending (and the captures inside) destroyed here
+private:
+    std::vector<std::function<void()>> tasks_;
+};
+
+class Worker : public std::enable_shared_from_this<Worker> {
+public:
+    inline static int alive = 0;
+    inline static int runs = 0;
+    Worker() { ++alive; }
+    ~Worker() { --alive; }
+
+    void scheduleOn(TaskQueue& q) {
+        // shared_from_this() joins the EXISTING owner group: the captured
+        // `self` shares the control block make_shared created.
+        q.push([self = shared_from_this()] { self->doWork(); });
+    }
+
+    void doWork() { ++runs; }
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    TaskQueue q;
+    {
+        auto w = std::make_shared<Worker>();
+        assert(Worker::alive == 1);
+        w->scheduleOn(q);
+        w->scheduleOn(q);
+        // w + one owning capture per queued task, all one control block.
+        assert(w.use_count() == 3);
+    }                               // caller drops its handle...
+    assert(Worker::alive == 1);     // ...but the queued tasks keep it alive
+    assert(Worker::runs == 0);
+
+    q.runAll();                     // tasks execute, then captures destroyed
+    assert(Worker::runs == 2);
+    assert(Worker::alive == 0);     // last co-owner released the worker
+
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Async code inverts lifetime: the scheduling call returns immediately, but the object must survive until an unknowable later moment when the task runs. The only honest answer is for the task itself to own the object. The starter's `[this]` capture owns nothing — after the caller's brace, the worker is destroyed and the queued call would be UB; the harness surfaces it deterministically as `use_count() == 1` instead of 3, failing before anything dangles. The reflex fix, `std::shared_ptr<Worker>(this)`, is the famous double-free: that constructor unconditionally mints a *new* control block, so the worker now has two owner groups of count 1, each of which will `delete` it. `enable_shared_from_this` exists precisely for this: the base holds a hidden `weak_ptr` that the first `shared_ptr` (here, `make_shared`) initializes, and `shared_from_this()` locks it — returning a handle in the original owner group, count bumped from 1 to 2 to 3 as the harness observes. Preconditions matter: the base must be inherited *publicly*, and the object must already be shared-owned when `shared_from_this()` runs — on a stack object or inside the constructor it throws `std::bad_weak_ptr`. Watch the endgame too: `runAll` moves the task vector out, runs it, and the captures die with `pending` — the worker's destruction point is exactly the last task's destruction, which is the contract async frameworks (ASIO's `self = shared_from_this()` idiom) are built on.
+
+## challenge: copy-on-write string, driven by use_count
+tags: smart-pointers, raii
+track: core
+difficulty: hard
+
+Implement `CowString`: copies are O(1) because they share one heap buffer through a `shared_ptr<std::string>`; the real copy happens only when someone *writes* to a shared buffer. `append` must detach — clone the buffer — if and only if other owners exist, and mutate in place when the string is the sole owner. The harness checks sharing (identical buffer addresses), correct detachment (writers never disturb other holders), and that a sole owner does not pay for a copy.
+
+hint: `data_.use_count()` tells you how many CowStrings share the buffer. Greater than 1 at write time means detach first; exactly 1 means mutate in place.
+hint: Detach = `data_ = std::make_shared<std::string>(*data_);` — clone the current contents into a fresh buffer, drop the old share. The OTHER holders keep the old buffer untouched; only the writer moves.
+hint: The default copy constructor is already correct — copying the shared_ptr member shares the buffer and bumps use_count. All the cleverness lives in the write path.
+
+```cpp
+// starter
+class CowString {
+public:
+    explicit CowString(std::string s)
+        : data_(std::make_shared<std::string>(std::move(s))) {}
+
+    // Copies share the buffer — that's the cheap part, and it already works.
+    CowString(const CowString&) = default;
+    CowString& operator=(const CowString&) = default;
+
+    // Read access: never copies.
+    const std::string& view() const { return *data_; }
+
+    // TODO: write access. Mutating a SHARED buffer corrupts every other
+    // holder. Detach (clone the buffer) first — but only when actually shared.
+    void append(const std::string& tail) {
+        *data_ += tail;
+    }
+
+    // How many CowStrings currently share this buffer.
+    long owners() const { return data_.use_count(); }
+
+private:
+    std::shared_ptr<std::string> data_;
+};
+```
+
+```cpp
+class CowString {
+public:
+    explicit CowString(std::string s)
+        : data_(std::make_shared<std::string>(std::move(s))) {}
+
+    // Copies share the buffer — that's the cheap part, and it already works.
+    CowString(const CowString&) = default;
+    CowString& operator=(const CowString&) = default;
+
+    // Read access: never copies.
+    const std::string& view() const { return *data_; }
+
+    // Write access: detach if shared, then mutate our (now private) buffer.
+    void append(const std::string& tail) {
+        detachIfShared();
+        *data_ += tail;
+    }
+
+    // How many CowStrings currently share this buffer.
+    long owners() const { return data_.use_count(); }
+
+private:
+    void detachIfShared() {
+        if (data_.use_count() > 1) {
+            data_ = std::make_shared<std::string>(*data_);  // clone, unshare
+        }
+    }
+
+    std::shared_ptr<std::string> data_;
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    CowString a(std::string("hello"));
+    assert(a.owners() == 1);
+    assert(a.view() == "hello");
+
+    CowString b = a;                        // O(1) copy: share the buffer
+    assert(a.owners() == 2);
+    assert(b.owners() == 2);
+    assert(&a.view() == &b.view());         // literally the same std::string
+
+    b.append(" world");                     // write on shared -> b detaches
+    assert(b.view() == "hello world");
+    assert(a.view() == "hello");            // a is untouched
+    assert(a.owners() == 1);
+    assert(b.owners() == 1);
+    assert(&a.view() != &b.view());
+
+    const std::string* buf = &b.view();
+    b.append("!");                          // sole owner -> in place, no clone
+    assert(b.view() == "hello world!");
+    assert(&b.view() == buf);               // same std::string object
+    assert(b.owners() == 1);
+
+    CowString c = b;
+    CowString d = c;
+    assert(b.owners() == 3);
+    c.append("?");                          // only the WRITER detaches
+    assert(c.owners() == 1);
+    assert(b.owners() == 2);                // b and d still share
+    assert(d.owners() == 2);
+    assert(c.view() == "hello world!?");
+    assert(b.view() == "hello world!");
+    assert(d.view() == "hello world!");
+    assert(&b.view() == &d.view());
+
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Copy-on-write splits the cost of value semantics: reads and copies are shared-and-cheap, and the price of a real copy is deferred to the first write — paid by the writer, exactly once. `shared_ptr` supplies both ingredients: shared lifetime for the buffer, and `use_count()` as the sharing detector. The invariant to hold in your head: *a buffer may be referenced by many readers, but a mutation must only ever touch a buffer with use_count 1.* Hence `detachIfShared()` — clone when `use_count() > 1`, then mutate the private clone. The starter violates the invariant in the most instructive way: `b.append(" world")` writes through a buffer that `a` also holds, so `a` silently becomes `"hello world"` — spooky action at a distance, the same aliasing bug that made pre-C++11 COW `std::string` infamous. Note who moves on detach: the writer re-points to the clone; the other holders keep the *old* buffer at its old address, which the harness pins with address comparisons. Two honest caveats before using this in production: `use_count()` is only race-free here because the harness is single-threaded — under concurrency the check-then-write is a TOCTOU and the classic remedy is deep atomics or just not doing COW (which is why C++11 banned COW in `std::string`); and `owners()` leaking the count into the public API is for the exercise — real COW keeps detachment fully internal, triggered by the non-const access path.
+
+## challenge: fix: two owners, one session, one crash
+tags: smart-pointers, raii
+track: core
+difficulty: medium
+
+This code review found a bug: a service that hands out a session through two `shared_ptr` handles crashes at shutdown with a double free — heap-corruption reports point at the session's memory. The counting looks off well before the crash, too: with both handles live, each reports `use_count() == 1`. Find and fix it — `makeHandles` must keep returning two handles to one shared session.
+
+hint: Compare the use_counts the harness expects with what the starter produces. Two owners of one object should both report 2 — why would each say 1?
+hint: `std::shared_ptr<T>(raw)` doesn't look up whether `raw` is already owned — it can't. Every construction from a raw pointer creates a brand-new control block that believes it is the sole owner.
+hint: Only ONE shared_ptr may ever be built from a given raw pointer; every other owner must be a copy of it. Better: never touch the raw pointer — `make_shared` once, copy for the second handle.
+
+```cpp
+// starter
+struct Session {
+    inline static int alive = 0;
+    int id = 42;
+    Session() { ++alive; }
+    ~Session() { --alive; }
+};
+
+// Returns two owning handles to ONE shared session.
+std::pair<std::shared_ptr<Session>, std::shared_ptr<Session>> makeHandles() {
+    Session* raw = new Session();
+    std::shared_ptr<Session> primary(raw);
+    std::shared_ptr<Session> secondary(raw);    // second owner of same raw ptr
+    return {primary, secondary};
+}
+```
+
+```cpp
+struct Session {
+    inline static int alive = 0;
+    int id = 42;
+    Session() { ++alive; }
+    ~Session() { --alive; }
+};
+
+// Returns two owning handles to ONE shared session.
+std::pair<std::shared_ptr<Session>, std::shared_ptr<Session>> makeHandles() {
+    auto primary = std::make_shared<Session>();
+    auto secondary = primary;       // copy: same control block, count == 2
+    return {primary, secondary};
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    {
+        auto [a, b] = makeHandles();
+        assert(a != nullptr && b != nullptr);
+        assert(a.get() == b.get());     // one session...
+        assert(a->id == 42);
+
+        // ...with ONE owner group. Two control blocks would each say 1 here,
+        // and each would delete the session on its way out.
+        assert(a.use_count() == 2);
+        assert(b.use_count() == 2);
+        assert(Session::alive == 1);
+    }
+    assert(Session::alive == 0);        // destroyed exactly once
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The strong count lives in the control block, and the control block is created by the `shared_ptr` constructor — `std::shared_ptr<Session>(raw)` cannot discover that `raw` is already owned, so the starter builds *two* control blocks over one object, each with count 1. Both handles work fine all day; the corruption is scheduled for later, when the second control block drains and calls `delete` on already-freed memory. The tell is exactly what the harness asserts: two live owners of one session, yet `use_count() == 1` on each — whenever `use_count()` disagrees with the number of owners you can see, suspect a second control block (checking this *before* scope exit is also what lets the harness fail cleanly instead of crashing in the double delete). The fix restates the rule: an object enters `shared_ptr` management exactly once, and every additional owner is a *copy* of an existing handle. `make_shared` makes the rule structural — no raw pointer ever exists to be wrapped twice, and you get the fused single allocation for free. The same landmine has a second trigger worth knowing: passing `ptr.get()` into an API that wraps it in its own `shared_ptr` — and its principled cousin, `shared_ptr(this)`, is why `enable_shared_from_this` exists.
+
+## quiz: What does this print?
+tags: c++17, structured-bindings
+track: core
+difficulty: easy
+
+```cpp
+std::pair<int, int> p{1, 2};
+auto [a, b] = p;
+a = 10;
+std::cout << p.first << ' ' << a;
+```
+
+- [ ] 10 10
+- [x] 1 10
+- [ ] 1 1
+- [ ] Compile error — bindings are read-only
+
+> `auto [a, b] = p` first copies `p` into a hidden object; the names bind to pieces of that **copy**, so writing `a` never touches `p`. Use `auto& [a, b] = p` to bind references into the original. Note the bindings themselves are names, not separate variables — `decltype(a)` is `int`, not `int&`.
+
+## quiz: What does this print?
+tags: c++17, if-init
+track: core
+difficulty: easy
+
+```cpp
+std::map<std::string, int> m{{"a", 1}};
+if (auto it = m.find("b"); it != m.end())
+    std::cout << it->second;
+else
+    std::cout << "miss " << (it == m.end());
+```
+
+- [ ] Compile error — `it` is out of scope in the else branch
+- [ ] 1
+- [x] miss 1
+- [ ] miss 0
+
+> The variable declared in the if-statement's init clause is in scope for **both** branches, so the else branch can still compare `it` (and it equals `end()`, printing 1). The lookup misses, so control goes to else. This pattern keeps `it` from leaking into the surrounding scope.
+
+## quiz: What happens when this compiles?
+tags: c++17, if-constexpr
+track: core
+difficulty: medium
+
+Note the plain `if` — not `if constexpr`.
+
+```cpp
+template <class T>
+auto describe(T x) {
+    if (std::is_integral_v<T>)
+        return (unsigned long)(x * 2);
+    else
+        return (unsigned long)x.size();
+}
+int main() { std::cout << describe(21); }
+```
+
+- [ ] Prints 42
+- [x] Compile error — `int` has no member `size()`
+- [ ] Prints garbage
+- [ ] Runtime error in the else branch
+
+> A plain `if` instantiates **both** branches for every `T`, and `21.size()` is ill-formed. With `if constexpr` the false branch is discarded per instantiation and this prints 42. Unlike `#ifdef`, `if constexpr` still requires both branches to parse and works on template parameters, not preprocessor symbols.
+
+## quiz: What is the behavior of this program?
+tags: c++17, optional
+track: core
+difficulty: medium
+
+```cpp
+std::optional<int> port;   // empty
+std::cout << port.value_or(8080) << ' ';
+std::cout << *port;
+```
+
+- [ ] Prints "8080 0"
+- [ ] Prints 8080, then `*port` throws std::bad_optional_access
+- [x] Prints 8080, then undefined behavior
+- [ ] Compile error — cannot dereference an optional
+
+> `value_or` returns the fallback when empty — that part is safe. But `operator*` on an empty optional is **undefined behavior**, not an exception; it is `value()` that throws `bad_optional_access`. In practice you get garbage or a crash, so check `has_value()` or prefer `value_or`/`value()`.
+
+## quiz: What does this print?
+tags: c++17, variant
+track: core
+difficulty: easy
+
+```cpp
+std::variant<int, std::string> v = 7;
+v = "hi";
+std::visit([](auto&& x) { std::cout << x; }, v);
+std::cout << ' ' << v.index();
+```
+
+- [x] hi 1
+- [ ] 7 0
+- [ ] hi 0
+- [ ] Compile error — the visitor must handle each alternative separately
+
+> Assignment switches the active alternative to `std::string` (index 1, the second type), and a generic lambda is a valid visitor for all alternatives. `std::visit` dispatches on the runtime index. If a type-changing assignment throws mid-switch the variant can end up `valueless_by_exception()` — then `visit` throws `bad_variant_access`.
+
+## quiz: What is the behavior of this program?
+tags: c++17, string-view
+track: core
+difficulty: medium
+
+```cpp
+std::string make() { return "hello world"; }
+
+int main() {
+    std::string_view sv = make();
+    std::cout << sv;
+}
+```
+
+- [ ] Prints "hello world"
+- [ ] Prints an empty string
+- [x] Undefined behavior — sv dangles
+- [ ] Compile error — string_view cannot bind to a temporary
+
+> `string_view` is a non-owning pointer+length. The temporary `std::string` returned by `make()` is destroyed at the end of the declaration's full-expression, leaving `sv` pointing into freed memory. It often *appears* to work, which is exactly why this bug ships. Never bind a `string_view` to a temporary you don't outlive.
+
+## quiz: What does the vector contain?
+tags: c++17, ctad
+track: core
+difficulty: medium
+
+```cpp
+std::vector v{3, 5};
+std::cout << v.size() << ' ' << v[0] << ' ' << v[1];
+```
+
+- [x] 2 3 5 — two elements, 3 and 5
+- [ ] 3 5 5 — three elements, all 5
+- [ ] Compile error — vector needs an explicit element type
+- [ ] 2 0 0 — two value-initialized elements
+
+> Class template argument deduction infers `std::vector<int>` from the initializers, and braces select the `initializer_list` constructor: two elements, 3 and 5. The classic trap is the parenthesized form — `std::vector<int> v(3, 5)` means "three copies of 5". CTAD only picks the template arguments; it doesn't change which constructor braces prefer.
+
+## quiz: What happens when this program is linked?
+tags: c++17, inline-variables
+track: core
+difficulty: medium
+
+```cpp
+// config.h — included by both a.cpp and b.cpp
+inline int hit_count = 0;
+
+// a.cpp
+void bump() { ++hit_count; }
+
+// b.cpp
+int main() { bump(); ++hit_count; std::cout << hit_count; }
+```
+
+- [ ] Linker error — duplicate symbol hit_count
+- [ ] Prints 1 — each translation unit gets its own copy
+- [x] Prints 2 — all translation units share one variable
+- [ ] Undefined behavior — ODR violation
+
+> A C++17 `inline` variable may be defined identically in multiple translation units; the linker merges them into **one** entity, so both increments hit the same object and it prints 2. Without `inline`, defining it in a header is an ODR violation (duplicate-symbol link error). Pre-C++17 you needed an `extern` declaration plus exactly one out-of-line definition.
+
+## quiz: What does the standard say happens here?
+tags: c++17, nodiscard
+track: core
+difficulty: easy
+
+```cpp
+[[nodiscard]] int connect() { return -1; }
+
+int main() { connect(); }
+```
+
+- [ ] Ill-formed — the result must be used
+- [x] It compiles; implementations are encouraged to warn about the ignored result
+- [ ] std::terminate is called at runtime
+- [ ] Undefined behavior
+
+> `[[nodiscard]]` makes discarding the return value diagnosable, not ill-formed: compilers emit a warning (an error only under flags like `-Werror`) and the program runs normally. Cast to `void` to silence it deliberately. `[[maybe_unused]]` is the mirror-image attribute — it suppresses unused-entity warnings.
+
+## quiz: The comparator throws during a parallel sort. What happens?
+tags: c++17, parallel-algorithms
+track: core
+difficulty: hard
+
+```cpp
+std::sort(std::execution::par, v.begin(), v.end(),
+          [](int a, int b) {
+              if (a == INT_MIN) throw std::runtime_error("bad");
+              return a < b;
+          });
+```
+
+- [ ] The exception propagates to the caller of std::sort
+- [ ] The exception is stored and rethrown after the algorithm finishes
+- [x] std::terminate is called
+- [ ] The algorithm silently falls back to sequential execution
+
+> If an element access function (comparator, predicate, projection) exits via an exception under **any** execution policy, the standard requires `std::terminate` — there is no defined way to unwind across worker threads. The other parallel contract is on you: callbacks must be data-race free. Only `bad_alloc` from the algorithm's own internal allocation may propagate.
+
+## quiz: What does this print?
+tags: c++20, concepts
+track: core
+difficulty: medium
+
+```cpp
+template <class T>
+concept HasSize = requires(T t) { t.size(); };
+
+void report(HasSize auto const&) { std::cout << "sized "; }
+void report(auto const&)         { std::cout << "plain "; }
+
+int main() {
+    report(std::string("hi"));
+    report(42);
+}
+```
+
+- [ ] Compile error — `42.size()` is ill-formed inside the requires expression
+- [x] sized plain
+- [ ] sized sized
+- [ ] Compile error — the two overloads are ambiguous
+
+> An unsatisfied constraint removes the overload from consideration — like SFINAE, it is a substitution failure, never a hard error, because the requires expression only *checks* whether `t.size()` would compile. For `std::string` both overloads are viable and the more-constrained one wins; for `int` only the unconstrained one survives. A hard error would occur only if the invalid expression appeared in the function *body*.
+
+## quiz: How many times does the transform lambda run?
+tags: c++20, ranges
+track: core
+difficulty: hard
+
+```cpp
+int calls = 0;
+std::vector<int> v{1, 2, 3, 4, 5, 6};
+auto r = v | std::views::filter([](int x) { return x % 2 == 0; })
+           | std::views::transform([&](int x) { ++calls; return x * x; });
+auto it = r.begin();
+std::cout << *it << ' ' << calls;
+```
+
+- [ ] 4 0
+- [x] 4 1
+- [ ] 4 3
+- [ ] 36 6
+
+> Views are lazy: building the pipeline does no work at all. `r.begin()` makes `filter` scan forward to the first even element (2) but still doesn't call `transform`; only the dereference `*it` invokes it — once — producing 4. Nothing is ever computed for elements you don't visit.
+
+## quiz: What does this print?
+tags: c++20, spaceship
+track: core
+difficulty: easy
+
+```cpp
+struct Version {
+    int major, minor;
+    auto operator<=>(const Version&) const = default;
+};
+
+int main() {
+    Version a{1, 2}, b{1, 10};
+    std::cout << (a < b) << (a == b) << (a != b);
+}
+```
+
+- [x] 101
+- [ ] 011
+- [ ] Compile error — defaulting <=> does not provide operator==
+- [ ] 100
+
+> A defaulted `<=>` compares members lexicographically in declaration order: majors tie, then 2 < 10, so `a < b` is true. Defaulting `operator<=>` also implicitly declares a defaulted `operator==`, so all six comparison operators work from this one line. (Equality is kept separate so types like `std::string` can short-circuit `==` on length.)
+
+## quiz: What is the status of this initialization in standard C++20?
+tags: c++20, designated-initializers
+track: core
+difficulty: medium
+
+```cpp
+struct Config { int width; int height; bool fullscreen; };
+
+Config c{.height = 720, .width = 1280};
+```
+
+- [ ] Well-formed — same as C99 designated initializers
+- [x] Ill-formed — designators must appear in declaration order
+- [ ] Well-formed, but fullscreen is left uninitialized
+- [ ] Undefined behavior
+
+> Unlike C99, C++20 requires designators to follow the members' declaration order (`width` before `height`), which preserves the guarantee that initializers evaluate left-to-right in member order. GCC rejects this; Clang accepts it only as an extension with a warning. Reordered to `.width, .height` it is fine, and the omitted `fullscreen` would be value-initialized to `false`, not left uninitialized.
+
+## quiz: What does this print?
+tags: c++20, three-way-comparison
+track: core
+difficulty: hard
+
+```cpp
+double x = 1.0, y = std::nan("");
+auto c = x <=> y;
+std::cout << (c == std::partial_ordering::unordered)
+          << (x < y) << (x > y) << (x == y);
+```
+
+- [ ] 0000
+- [x] 1000
+- [ ] 1001
+- [ ] Compile error — <=> is not defined for double
+
+> Floating-point `<=>` returns `std::partial_ordering` precisely because NaN is comparable to nothing: the result is `unordered` (first 1). In an unordered comparison, `<`, `>`, and `==` are all false (000). Integers instead get `strong_ordering`, where exactly one of less/equal/greater always holds — the return type documents the domain's guarantees.
+
+## quiz: What is the behavior of this program?
+tags: c++20, span
+track: core
+difficulty: medium
+
+```cpp
+std::vector<int> v{1, 2, 3, 4};
+std::span<int> s(v);
+v.push_back(5);
+std::cout << s[0];
+```
+
+- [ ] Prints 1 — the span tracks the vector automatically
+- [ ] Prints 5
+- [x] Undefined behavior if push_back reallocated — s still points at the old buffer
+- [ ] Compile error — span cannot view a vector
+
+> `std::span` is a non-owning pointer+size over someone else's storage; it never registers with, or follows, the container it viewed. `push_back` may reallocate, freeing the buffer the span points into — after that, every access through `s` is UB. Same discipline as `string_view`: don't mutate or destroy the owner while a view is live.
+
+## quiz: Which statement about constinit is true?
+tags: c++20, constinit
+track: core
+difficulty: medium
+
+```cpp
+constexpr int default_port() { return 8080; }
+
+constinit int port = default_port();
+
+int main() { ++port; std::cout << port; }   // prints 8081
+```
+
+- [ ] It makes port immutable, like const
+- [x] It guarantees static (compile-time) initialization, but the variable stays mutable
+- [ ] It is a synonym for constexpr on variables
+- [ ] It defers initialization until first use, like a function-local static
+
+> `constinit` demands the initializer be a constant expression — so initialization happens at compile time, eliminating static-init-order fiasco races — but says nothing about the variable afterwards, which is why `++port` compiles. Swap the initializer for `std::rand()` and it fails to compile. `constexpr` on a variable implies both static initialization *and* const; `const` alone implies neither.
+
+## quiz: In what order does this print?
+tags: c++20, coroutines
+track: core
+difficulty: medium
+
+Assume `generator<int>` is a typical lazy coroutine generator (its promise's `initial_suspend` returns `suspend_always`).
+
+```cpp
+generator<int> ticks() {
+    std::cout << "start ";
+    for (int i = 1;; ++i) co_yield i;
+}
+
+int main() {
+    auto g = ticks();
+    std::cout << "created ";
+    std::cout << g.next();   // resumes the coroutine once
+}
+```
+
+- [ ] start created 1
+- [x] created start 1
+- [ ] start 1 created
+- [ ] It hangs — the infinite loop runs at the call site
+
+> Calling a coroutine only allocates its frame and returns the generator object — the body is suspended at the initial suspend point, so "created" prints before "start". The first resume runs the body until `co_yield 1` suspends it back to the caller. The infinite loop is harmless: control returns to `main` at every yield, which is the whole point of a generator.
+
+## quiz: What does this print?
+tags: c++20, format
+track: core
+difficulty: easy
+
+```cpp
+std::cout << std::format("[{:>6.2f}] {:#x}", 3.14159, 255);
+```
+
+- [x] [  3.14] 0xff
+- [ ] [3.14  ] 0xff
+- [ ] [3.141590] 255
+- [ ] Throws std::format_error at runtime
+
+> `{:>6.2f}` means fixed notation, precision 2, right-aligned in width 6 — "3.14" padded with two leading spaces. `{:#x}` prints 255 in hex with the `0x` prefix. A malformed or arity-mismatched format string would not throw here: `std::format` checks literal format strings at **compile time**.
+
+## quiz: What happens at the second call?
+tags: c++20, template-lambdas
+track: core
+difficulty: easy
+
+```cpp
+auto add = []<typename T>(T a, T b) { return a + b; };
+
+std::cout << add(1, 2);     // fine
+std::cout << add(1, 2.5);   // ?
+```
+
+- [ ] Prints 3.5
+- [ ] Prints 3 — the double is truncated
+- [x] Compile error — T deduces both int and double
+- [ ] Undefined behavior
+
+> The C++20 template-parameter-list lambda forces both parameters to the **same** `T`, so `add(1, 2.5)` fails deduction: `T` cannot be `int` and `double` at once. The C++14 generic lambda `[](auto a, auto b)` would accept it, because each `auto` parameter is an independent template parameter — the same rule that makes `void f(auto x)` (an abbreviated function template) a real template.
+
+## quiz: What does this print?
+tags: c++23, expected
+track: core
+difficulty: medium
+
+```cpp
+std::expected<int, std::string> parse(const std::string& s) {
+    if (s.empty()) return std::unexpected("empty input");
+    return static_cast<int>(s.size());
+}
+
+int main() {
+    auto r = parse("").and_then([](int n) -> std::expected<int, std::string> {
+        std::cout << "doubling ";
+        return n * 2;
+    });
+    std::cout << (r ? std::to_string(*r) : r.error());
+}
+```
+
+- [ ] doubling 0
+- [x] empty input
+- [ ] doubling empty input
+- [ ] Throws an exception — the expected holds an error
+
+> `and_then` runs its continuation only when the `expected` holds a value; on error it passes the error through untouched, so "doubling" never prints (`or_else` is the mirror image, running only on error). Nothing throws — unlike exceptions, the failure is an ordinary value in the return type, visible in the signature and dispatched with normal control flow.
+
+## quiz: What does this print, and which C++23 feature makes it work?
+tags: c++23, deducing-this
+track: core
+difficulty: medium
+
+```cpp
+auto fib = [](this auto self, int n) -> int {
+    return n < 2 ? n : self(n - 1) + self(n - 2);
+};
+std::cout << fib(10);
+```
+
+- [x] 55 — the explicit object parameter lets the lambda name itself
+- [ ] Compile error — a lambda cannot refer to itself
+- [ ] 55 — but only because the lambda captures fib by reference
+- [ ] Undefined behavior — self is dangling during recursion
+
+> `this auto self` is C++23's explicit object parameter ("deducing this"): the closure object is passed as a visible, deduced parameter, so the body can simply call `self` — no `std::function` indirection or Y-combinator tricks. Nothing is captured; `fib(10)` is 55. The same mechanism lets one member function template replace the `const`/non-`const`/`&`/`&&` overload quadruplet and enables CRTP-style code without CRTP.
+
+## quiz: What happens here?
+tags: c++23, print
+track: core
+difficulty: easy
+
+```cpp
+#include <print>
+
+int main() {
+    std::println("{} + {} = {}", 1, 2);   // one argument short
+}
+```
+
+- [ ] Prints "1 + 2 = "
+- [ ] Throws std::format_error at runtime
+- [x] Compile error — the format string is checked at compile time
+- [ ] Undefined behavior
+
+> `std::println` (like `std::print` and `std::format`) takes a `std::format_string`, whose constructor is `consteval`: the literal is parsed during compilation, and a third `{}` with only two arguments is rejected before the program ever runs. That is a categorical upgrade over `printf`, where the same mistake is runtime UB. `println` also appends a newline; `print` does not.
+
+## quiz: What does this print?
+tags: c++23, if-consteval
+track: core
+difficulty: medium
+
+```cpp
+constexpr int mode() {
+    if consteval { return 1; }
+    else         { return 2; }
+}
+
+int main() {
+    constexpr int a = mode();
+    int n = 0;
+    int b = mode() + n;
+    std::cout << a << b;
+}
+```
+
+- [ ] 11
+- [ ] 22
+- [x] 12
+- [ ] Compile error — mode() cannot behave differently at compile time
+
+> `if consteval` asks "is this call happening during constant evaluation?" — initializing the `constexpr` variable takes the first branch (1), the plain runtime call takes the `else` (2). It fixes the classic `std::is_constant_evaluated()` trap of testing it inside `if constexpr` (always true) and, unlike the function, its consteval branch may call `consteval` functions.
+
+## quiz: What does grid[1, 2] print?
+tags: c++23, mdspan
+track: core
+difficulty: medium
+
+```cpp
+std::vector<int> data{1, 2, 3, 4, 5, 6};
+std::mdspan grid(data.data(), 2, 3);   // 2 rows x 3 columns
+std::cout << grid[1, 2];
+```
+
+- [ ] 5
+- [x] 6
+- [ ] Compile error — operator[] takes exactly one index
+- [ ] 3
+
+> `std::mdspan` is a non-owning multidimensional *view* over existing storage — it copies nothing and frees nothing. The default layout is row-major (`layout_right`), so `[1, 2]` maps to offset 1*3 + 2 = 5, the value 6. The multi-argument `operator[]` is itself a C++23 feature; C++20 would require the comma to be an operator inside the brackets.
+
+## quiz: What does this print?
+tags: c++23, ranges-to
+track: core
+difficulty: easy
+
+```cpp
+auto squares = std::views::iota(1, 5)
+             | std::views::transform([](int x) { return x * x; })
+             | std::ranges::to<std::vector>();
+squares.push_back(25);
+for (int x : squares) std::cout << x << ' ';
+```
+
+- [x] 1 4 9 16 25
+- [ ] Compile error — you cannot push_back into a view
+- [ ] 1 4 9 16 — the push_back is ignored because views are lazy
+- [ ] 1 2 3 4 25
+
+> `std::ranges::to<std::vector>` is the missing C++20 piece: it **eagerly** materializes the lazy pipeline into a real, owning container (element type deduced as `int`). `iota(1, 5)` is the half-open range 1..4, squared to 1 4 9 16. What comes out is an ordinary `std::vector`, so `push_back(25)` is perfectly fine — only the views themselves were immutable.
+
+## quiz: Which statement about std::flat_map is true?
+tags: c++23, flat-map
+track: core
+difficulty: hard
+
+```cpp
+std::flat_map<int, std::string> m{{3, "c"}, {1, "a"}, {2, "b"}};
+// iterates 1 2 3 — sorted, like std::map
+```
+
+- [ ] It is a hash table, so lookups are O(1) on average
+- [x] Lookup and iteration are cache-friendly thanks to contiguous sorted storage, but insertion is O(n) and invalidates iterators
+- [ ] It behaves exactly like std::map, including stable iterators, just with a smaller header
+- [ ] It keeps elements in insertion order to make inserts O(1)
+
+> `flat_map` is a container adaptor over two sorted contiguous sequences (by default vectors of keys and of values): lookup is still O(log n) binary search but with cache-friendly probes, and iteration is a linear scan. The price is O(n) insert/erase (elements shift) and iterator invalidation on any insertion — the exact opposite of node-based `std::map`. Use it for build-once, query-many workloads; note its iterators hand out proxy references, so structured bindings need `const auto&` or by-value `auto`.
+
+## quiz: What is the type of i?
+tags: c++23, size-t-literal
+track: core
+difficulty: easy
+
+```cpp
+std::vector<int> v{10, 20, 30};
+for (auto i = 0uz; i < v.size(); ++i)
+    std::cout << v[i] << ' ';
+```
+
+- [ ] int
+- [ ] unsigned int
+- [x] std::size_t
+- [ ] unsigned long long on every platform
+
+> The C++23 `uz` suffix makes the literal a `std::size_t` (`z` alone gives the signed counterpart), so `auto` deduces exactly the type `v.size()` returns. That kills the signed/unsigned comparison warning of `int i = 0` without hardcoding a platform-dependent type — `size_t` is 32-bit on some targets, so "always unsigned long long" is wrong.
+
+## quiz: What does std::stacktrace::current() capture?
+tags: c++23, stacktrace
+track: core
+difficulty: medium
+
+```cpp
+void load_config(const std::string& path) {
+    if (!exists(path))
+        log_error("missing config", std::to_string(std::stacktrace::current()));
+}
+```
+
+- [x] The calling thread's stack of function calls at the point where current() is invoked
+- [ ] The stack as it was when the most recent exception was thrown
+- [ ] A trace recorded at program startup
+- [ ] Nothing unless called inside a catch block
+
+> `std::stacktrace::current()` snapshots the current thread's call sequence right where you call it — `load_config`, its caller, and so on up to `main`. That is why you capture it where the error is *detected* (or store one inside an exception type), not in the `catch` handler, where unwinding has already erased the interesting frames. Each `stacktrace_entry` exposes `description()`, `source_file()`, and `source_line()` for logging.
+
+## quiz: Which statement about [[assume]] is true?
+tags: c++23, assume
+track: core
+difficulty: hard
+
+```cpp
+int bucket(int x) {
+    [[assume(x >= 0)]];
+    return x / 16;
+}
+```
+
+- [ ] The expression is evaluated at runtime and aborts if false, like assert
+- [ ] It is a compile error unless the compiler can prove x >= 0
+- [x] The expression is never evaluated; the optimizer may rely on it, and calling bucket(-5) is undefined behavior
+- [ ] It is purely documentation with no effect on code generation
+
+> `[[assume]]` hands the optimizer a fact it may exploit without checking it: here signed `x / 16` can compile to a plain arithmetic shift, dropping the negative-rounding fix-up. The expression is *not* evaluated — it only had to be plausible — and if it would be false at runtime, behavior is undefined. Think of it as the inverse of `assert`: assert verifies and never optimizes, assume optimizes and never verifies.
+
+## fact: Function templates — write it once, deduce the rest
+tags: templates, deduction
+track: core
+
+A function template is a recipe the compiler stamps into a real function the moment you call it. Write the algorithm once with the type as a parameter, and let template argument deduction figure out `T` from the call site: `maxof(2, 3)` instantiates `maxof<int>`, and the same source line handles strings, doubles, or your own types. Deduction works by matching the parameter's shape against the argument's type — a `const T&` parameter given an `int` argument deduces `T = int`.
+
+Two rules trip people up. First, deduction never performs conversions: `maxof(1, 2.5)` fails to compile because `T` cannot be both `int` and `double`; you resolve it by casting one argument or by writing `maxof<double>(1, 2.5)` — explicit template arguments switch deduction off entirely. Second, by-value parameters decay their arguments: top-level `const`, references, and array-ness are stripped, which is why `template <class T> void f(T x)` always receives a plain copy.
+
+Since C++20 you can also write `auto` parameters — an abbreviated function template that behaves identically with less ceremony. Prefer letting deduction work: call sites stay clean, and changing an argument's type doesn't ripple through every caller.
+
+```cpp
+template <class T>
+const T& maxof(const T& a, const T& b) { return a < b ? b : a; }
+
+int  i = maxof(2, 3);                 // T deduced as int
+auto s = maxof(std::string("a"), std::string("b"));
+// maxof(1, 2.5);                     // error: T can't be int AND double
+auto d = maxof<double>(1, 2.5);       // explicit argument: deduction off
+
+void print(const auto& x);            // C++20 abbreviated function template
+```
+
+## fact: Class templates and CTAD — constructors that deduce
+tags: templates, ctad
+track: core
+
+Class templates parameterize a type rather than a function: `std::vector<T>`, `std::pair<A, B>`, your own `Matrix<T>`. Before C++17 you always spelled the arguments out (`std::pair<int, std::string> p{1, "hi"}`) or reached for a maker function like `std::make_pair`, whose whole reason to exist was that constructors couldn't drive deduction.
+
+Class template argument deduction (CTAD) fixed that: `std::pair p{1, 2.5}` deduces `pair<int, double>` straight from the constructor arguments, and `std::vector v{1, 2, 3}` deduces `vector<int>`. Under the hood the compiler builds a set of hypothetical function templates from the constructors — plus any deduction guides — and runs ordinary overload resolution on them.
+
+Deduction guides matter when constructor parameter types shouldn't be taken literally. The standard library ships one so constructing a vector from two iterators deduces the element type, not the iterator type. You can write your own — for example, steering string literals to `std::string` instead of letting them decay to `const char*`. Since C++20, aggregates get implicit CTAD too, no constructor required — with one trap: the implicit aggregate candidate exists only while you have declared *no* guides of your own, so your first guide must be accompanied by a generic `Pair(A, B) -> Pair<A, B>` restoring the plain case. When deduction surprises you, spell the arguments explicitly: CTAD is a convenience, not an obligation.
+
+```cpp
+template <class A, class B>
+struct Pair { A first; B second; };
+
+template <class A, class B> Pair(A, B) -> Pair<A, B>;   // restore the plain case
+template <class B> Pair(const char*, B) -> Pair<std::string, B>;
+
+Pair p1{1, 2.5};         // Pair<int, double> via the generic guide
+Pair p2{"port", 8080};   // Pair<std::string, int>: more specialized guide wins
+std::vector v{1, 2, 3};  // std::vector<int>
+```
+
+## fact: Specialization — carving exceptions out of a template
+tags: templates, specialization
+track: core
+
+A template is a general recipe; specialization is how you carve out exceptions. A full specialization replaces the implementation for one exact argument set: `template <> struct Hash<std::string> {...};` says "for `std::string`, use this instead." A partial specialization keeps some parameters open while constraining the shape: `template <class T> struct Traits<T*>` matches every pointer, `template <class T> struct Traits<std::vector<T>>` matches every vector. The compiler always picks the most specialized match, so the primary template becomes the fallback.
+
+Two caveats. Only class templates and variable templates support partial specialization — function templates can only be fully specialized, and full specializations don't participate in overload resolution the way you'd expect, so the standing advice is: overload functions, specialize classes. Second, a specialization must be visible before the first use that would instantiate the primary template, or you get ODR trouble that no compiler is required to diagnose.
+
+When is specialization the right tool? Type-keyed customization: traits classes (`std::iterator_traits`), `std::hash` for your own types, `std::tuple_size` to enable structured bindings. When you merely want different behavior per category of type inside one function, prefer `if constexpr` or concept-constrained overloads — reserve specialization for customizing types, not steering logic.
+
+```cpp
+template <class T> struct Traits {          // primary: the fallback
+    static constexpr const char* name = "value";
+};
+template <class T> struct Traits<T*> {      // partial: any pointer
+    static constexpr const char* name = "pointer";
+};
+template <> struct Traits<bool> {           // full: exactly bool
+    static constexpr const char* name = "flag";
+};
+
+static_assert(std::string_view(Traits<int*>::name) == "pointer");
+static_assert(std::string_view(Traits<bool>::name) == "flag");
+```
+
+## fact: Variadic templates — fold, don't recurse
+tags: templates, variadic
+track: core
+
+Variadic templates let one template accept any number of arguments: `template <class... Ts>` declares a template parameter pack, `Ts... args` the matching function parameter pack, and `sizeof...(Ts)` counts it. Before C++17, consuming a pack meant peel-and-recurse: handle the first argument, forward the rest to a recursive call, and write a separate base-case overload for the empty pack.
+
+Fold expressions replaced most of that ceremony. `(args + ...)` is a unary fold — it expands the pack with `+` between the elements — and `(args + ... + 0)` is a binary fold that supplies an initial value, which also rescues the empty pack (an empty unary `+` fold is ill-formed, while `&&` folds to `true` and `||` to `false` by definition). Folds work with any binary operator, and the comma operator turns a fold into a loop: `((std::cout << args << ' '), ...)` prints every argument in order.
+
+The pack expansion pattern `f(args)...` transforms elementwise before folding, so `(... && pred(args))` checks a predicate over the whole pack with short-circuiting intact. Reach for recursion only when you need index-by-index control; a fold says "combine everything with this operator" in one readable line.
+
+```cpp
+template <class... Ts>
+auto sum(Ts... args) { return (args + ... + 0); }   // binary fold: empty-safe
+
+template <class... Ts>
+void printAll(const Ts&... args) {
+    ((std::cout << args << ' '), ...);              // comma fold as a loop
+}
+
+template <class P, class... Ts>
+bool anyMatch(P pred, const Ts&... vals) {
+    return (... || pred(vals));                     // expand, then fold
+}
+```
+
+## fact: From SFINAE to concepts — constraints you can read
+tags: templates, concepts
+track: core
+
+SFINAE — "substitution failure is not an error" — is the old mechanism for switching templates on and off: if substituting deduced types into a signature produces an invalid type, that candidate is silently dropped from overload resolution instead of failing the build. A decade of C++ ran on `std::enable_if` exploiting this. It worked, but `template <class T, std::enable_if_t<std::is_integral_v<T>, int> = 0>` reads like an incantation, and a failed match produces error novels instead of an explanation.
+
+C++20 concepts express the same idea directly. A concept is a named, reusable compile-time predicate: `template <class T> concept Number = std::integral<T> || std::floating_point<T>;`. You apply it as a constrained parameter (`template <Number T>`), in a requires-clause (`template <class T> requires Number<T>`), or via a `requires` expression that checks syntax — `requires(T t) { t.begin(); }` holds exactly when the expressions inside would compile.
+
+The wins are concrete: constraints sit in the signature where readers look; error messages name the requirement that failed instead of dumping a substitution trace; and overloads are ordered by which constraint subsumes which, replacing `enable_if` mutual-exclusion gymnastics. In new C++20 code, treat `enable_if` as legacy — anything it can do, a requires-clause states more honestly.
+
+```cpp
+// The old way: enable_if gymnastics
+template <class T, std::enable_if_t<std::is_integral_v<T>, int> = 0>
+T twiceOld(T x) { return x * 2; }
+
+// C++20: say what you mean
+template <class T>
+concept HasSize = requires(const T& t) {
+    { t.size() } -> std::convertible_to<std::size_t>;
+};
+
+std::size_t sizeOf(const HasSize auto& c) { return c.size(); }
+
+template <class T> requires std::integral<T>
+T twice(T x) { return x * 2; }
+```
+
+## fact: Non-type template parameters — values baked into types
+tags: templates, nttp
+track: core
+
+Template parameters don't have to be types. A non-type template parameter (NTTP) bakes a value into the type itself: `std::array<int, 4>` carries its size at compile time, which is why the compiler can stack-allocate it, unroll loops over it — and why `std::array<int, 3>` is simply a different type that never mixes with it. Classic NTTPs are integers, enums, pointers, and references: `template <std::size_t N> struct Ring { int data[N]; };` — each distinct value of `N` produces a distinct instantiation with its own statics.
+
+Values also drive compile-time computation. A `constexpr` function template with an `unsigned N` parameter computes during compilation, and the result is a constant expression usable in `static_assert` or as another template argument.
+
+C++20 widened what a value can be: floating-point NTTPs are now legal, and so are class-type NTTPs, provided the type is "structural" — public members, all of them structural themselves, no custom `operator==`. That unlocks passing small configuration structs and fixed-capacity strings as template arguments, which older codebases faked with integer packs. Use NTTPs for values that genuinely shape the type — sizes, alignments, policies, units. Anything that varies at run time belongs in a constructor argument instead.
+
+```cpp
+template <std::size_t N>
+struct Buffer { std::array<std::byte, N> data{}; };  // size is part of the type
+
+template <unsigned N>
+constexpr unsigned long long factorial() {
+    if constexpr (N == 0) return 1;
+    else return N * factorial<N - 1>();
+}
+static_assert(factorial<10>() == 3628800);
+
+struct Limits { int lo; int hi; };        // structural: OK as C++20 NTTP
+template <Limits L> int clampTo(int v) {
+    return v < L.lo ? L.lo : (v > L.hi ? L.hi : v);
+}
+int capped = clampTo<Limits{0, 100}>(250);  // 100
+```
+
+## fact: Dependent names — why templates demand typename and template
+tags: templates, dependent-names
+track: core
+
+Inside a template, names that depend on a template parameter are "dependent", and the compiler parses the template in two phases. Phase one, at definition time, checks everything non-dependent — syntax errors and unknown non-dependent names are diagnosed even if you never instantiate the template. Phase two, at instantiation, resolves the dependent names against the actual template arguments.
+
+The catch: during phase one the compiler cannot know what a dependent name refers to, so it assumes the worst. In `T::iterator it;` the name `T::iterator` could be a type or a static data member, and the parser defaults to "not a type." You must promise it's a type: `typename T::iterator it;`. The same ambiguity hits member templates: in `t.template get<0>()`, without the `template` keyword the `<` parses as less-than and the expression falls apart.
+
+Two-phase lookup also explains a classic inheritance surprise: members of a dependent base class are invisible to unqualified lookup in phase one, so inside `struct Derived : Base<T>` you must write `this->helper()` or `Base<T>::helper()` to defer the lookup to phase two. The rules feel bureaucratic, but they let templates be checked as early as possible — and g++ and clang both enforce them strictly.
+
+```cpp
+template <class T>
+struct Base { void helper() {} };
+
+template <class T>
+struct Derived : Base<T> {
+    typename T::value_type front(const T& c) {  // typename: dependent type
+        return *c.begin();
+    }
+    template <class U>
+    void relay(U& u) {
+        u.template process<0>();                // template: dependent member template
+    }
+    void run() { this->helper(); }              // dependent base: this-> required
+};
+```
+
+## fact: CRTP — static polymorphism, and when virtual still wins
+tags: templates, crtp
+track: core
+
+The Curiously Recurring Template Pattern makes a base class know its derived type at compile time: `struct Widget : Counted<Widget>`. Inside `Counted<D>`, `static_cast<D*>(this)` reaches the derived object with zero runtime machinery — no vtable pointer in the object, no indirect call, full inlining. This is static polymorphism: the set of "overrides" is fixed when the program compiles.
+
+Compare virtual dispatch. A virtual call costs a vtable indirection and usually blocks inlining, but it lets you store heterogeneous objects behind one `Base*` and pick behavior at run time. CRTP inverts the trade: `Counted<Widget>` and `Counted<Gadget>` are different base types, so there is no common pointer type and no runtime substitution — but every call compiles down to a direct, inlinable call, and each instantiation gets its own static members. That last property is exactly what makes per-derived-type counters and registries work.
+
+Use CRTP for mixins (`std::enable_shared_from_this`, comparison-operator generators, instance counting) and zero-overhead interfaces on hot paths, where the concrete type is always known at the call site. Use `virtual` when callers genuinely hold mixed types in one container. C++23's "deducing this" expresses many CRTP mixins with less ceremony, but the pattern remains everywhere in production code.
+
+```cpp
+template <class Derived>
+struct Counted {
+    inline static int alive = 0;
+    Counted() { ++alive; }
+    ~Counted() { --alive; }
+};
+
+struct Widget : Counted<Widget> {};
+struct Gadget : Counted<Gadget> {};  // its own counter: distinct base type
+
+// virtual: one Base*, runtime choice, vtable indirection
+// CRTP:   distinct bases, compile-time choice, direct inlined calls
+```
+
+## challenge: a clamp that works for any ordered type
+tags: templates, deduction
+track: core
+difficulty: easy
+
+Write a function template `clampValue` taking three parameters of type `const T&` — `value`, `low`, `high` — and returning `const T&`: `low` if `value < low`, `high` if `high < value`, otherwise `value` itself. Use only `operator<` for comparisons. Template argument deduction must make `clampValue(5, 1, 10)` work with no explicit template arguments.
+
+hint: One type parameter is enough — all three arguments and the return value share the same type.
+hint: Express both boundary checks with `operator<` alone: `value < low` for the lower bound, `high < value` for the upper.
+hint: `template <class T> const T& clampValue(const T& value, const T& low, const T& high)` — return `low` when `value < low`, `high` when `high < value`, else `value`.
+
+```cpp
+// starter
+// Return low if value < low, high if high < value, otherwise value.
+// Deduction must allow clampValue(5, 1, 10) — no explicit <int> at the call.
+// TODO: write the function template using only operator<.
+```
+
+```cpp
+template <class T>
+const T& clampValue(const T& value, const T& low, const T& high) {
+    if (value < low) return low;
+    if (high < value) return high;
+    return value;
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    assert(clampValue(5, 1, 10) == 5);
+    assert(clampValue(-3, 1, 10) == 1);
+    assert(clampValue(42, 1, 10) == 10);
+    assert(clampValue(2.5, 0.0, 1.0) == 1.0);
+    std::string s = clampValue(std::string("m"), std::string("a"), std::string("z"));
+    assert(s == "m");
+    // returning const T& means no copy: in-range clamping hands back the object itself
+    int v = 7;
+    assert(&clampValue(v, 0, 100) == &v);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** All three parameters mention the same `T`, so deduction requires the arguments to agree — `clampValue(5, 1, 10)` deduces `T = int` from every position, while a mixed call like `clampValue(5, 1.0, 10)` refuses to compile instead of silently converting, which is exactly the safety you want at a boundary check. Taking and returning `const T&` avoids copying potentially expensive types like `std::string`, and the address assert proves the in-range case returns the caller's own object. Using only `operator<` (never `>` or `<=`) mirrors `std::clamp` and the rest of the standard library, so any type that defines a single comparison works. One caution inherited from `std::clamp`: never call it with temporaries and bind the result to a reference that outlives the statement.
+
+## challenge: sum any number of arguments with one fold
+tags: templates, variadic
+track: core
+difficulty: easy
+
+Write a variadic function template `sumAll` that returns the sum of all its arguments using a fold expression — no recursion, no loops. The empty call `sumAll()` must compile and return `0`, and the function must be `constexpr` so results can be checked at compile time.
+
+hint: Declare a parameter pack (`template <class... Ts>`, parameters `Ts... args`) and expand it with a fold expression instead of writing a recursive helper.
+hint: A unary fold `(args + ...)` is ill-formed for an empty pack — there is a fold form that supplies an initial value.
+hint: `return (args + ... + 0);` — the binary fold seeds the sum with `0`, which both handles `sumAll()` and keeps the whole thing one expression.
+
+```cpp
+// starter
+// Sum every argument with a single fold expression.
+// sumAll() with no arguments must return 0. Keep it constexpr.
+// TODO: write the variadic function template.
+```
+
+```cpp
+template <class... Ts>
+constexpr auto sumAll(Ts... args) {
+    return (args + ... + 0);
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    static_assert(sumAll() == 0);              // empty pack folds to the seed
+    static_assert(sumAll(7) == 7);
+    static_assert(sumAll(1, 2, 3, 4) == 10);
+    assert(sumAll(1.5, 2.25) == 3.75);
+    assert(sumAll(1, 2.5) == 3.5);             // mixed pack: usual arithmetic promotions
+    assert(sumAll(1u, 2u, 3u) == 6u);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** `(args + ... + 0)` is a binary right fold: for `sumAll(1, 2, 3)` it expands to `1 + (2 + (3 + 0))`. The seed value earns its keep twice — a unary `+` fold over an empty pack is ill-formed by rule, so `(args + ...)` would reject `sumAll()`, while the binary form simply yields the seed. Each element keeps its own type during expansion, so mixed packs follow the ordinary arithmetic promotion rules (`1 + 2.5` becomes `double`), and `auto` deduces the final result type. Before C++17 this function needed a recursive peel-one-off overload plus a base case; the fold collapses all of that into one line that the optimizer sees straight through. Marking it `constexpr` costs nothing and lets callers verify sums with `static_assert`.
+
+## challenge: does the value pass every check?
+tags: templates, variadic
+track: core
+difficulty: medium
+
+Write a variadic function template `satisfiesAll(value, preds...)` taking one value and any number of callables. It returns `true` exactly when every `pred(value)` is true, implemented as a single fold expression over `&&`. Calling it with no predicates must return `true`, and evaluation must short-circuit: once one predicate says no, later predicates are never called.
+
+hint: The pack holds the predicates, not the values — expand `preds(value)` and fold the results with one operator.
+hint: `&&` is one of the operators whose unary fold is allowed over an empty pack — it folds to `true`, which gives you the no-predicates case for free.
+hint: `return (... && preds(value));` — a unary left fold; because it expands to real `&&` operators, short-circuiting works exactly as in hand-written code.
+
+```cpp
+// starter
+// True iff every pred(value) is true. No predicates -> true.
+// One fold expression, short-circuiting preserved.
+// TODO: write the variadic function template.
+template <class T, class... Preds>
+bool satisfiesAll(const T& value, Preds... preds) {
+    return false; // TODO
+}
+```
+
+```cpp
+template <class T, class... Preds>
+bool satisfiesAll(const T& value, Preds... preds) {
+    return (... && preds(value));
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    auto positive = [](int x) { return x > 0; };
+    auto even     = [](int x) { return x % 2 == 0; };
+    auto small    = [](int x) { return x < 100; };
+    assert(satisfiesAll(8, positive, even, small));
+    assert(!satisfiesAll(7, positive, even));
+    assert(!satisfiesAll(-2, positive, even, small));
+    assert(satisfiesAll(42));                     // no predicates: vacuously true
+    int calls = 0;
+    auto reject = [&](int) { ++calls; return false; };
+    auto record = [&](int) { ++calls; return true; };
+    assert(!satisfiesAll(1, reject, record));
+    assert(calls == 1);                           // fold short-circuited after the first false
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The trick is realizing the fold runs over the *predicates* while `value` stays fixed: the pattern `preds(value)` is expanded per pack element, then stitched together with `&&`. For `satisfiesAll(x, p, q)` the fold `(... && preds(value))` expands to `p(x) && q(x)` — genuine built-in `&&`, so short-circuiting is preserved, which the call-counting assert proves. The empty pack is handled by the language itself: unary folds are ill-formed for an empty pack *except* for `&&` (folds to `true`), `||` (folds to `false`), and the comma operator — the identity elements of each operation. The same shape with `||` gives you `satisfiesAny` for free. Note the predicates are taken by value, the standard-library convention for callables — cheap for lambdas and function pointers.
+
+## challenge: get<I> for a hand-rolled tuple
+tags: templates, variadic, if-constexpr
+track: core
+difficulty: hard
+
+The starter defines a minimal recursive tuple: `Tuple<Head, Tail...>` stores `head` plus a nested `Tuple<Tail...>`. Write the missing accessor: a function template `get<I>(t)` that returns a *reference* to the I-th element, so callers can both read and assign through it. Index the elements at compile time — either with `if constexpr` recursion or with recursive overloads.
+
+hint: The element's type changes with `I`, so the return type must be deduced — `auto&` — and the index must be a non-type template parameter, not a function argument.
+hint: Base case: `I == 0` returns `t.head`. Otherwise recurse into `t.tail` with `I - 1`. A runtime `if` cannot do this — both branches would need to compile with the same return type.
+hint: `template <std::size_t I, class Head, class... Tail> constexpr auto& get(Tuple<Head, Tail...>& t) { if constexpr (I == 0) return t.head; else return get<I - 1>(t.tail); }`
+
+```cpp
+// starter
+template <class... Ts> struct Tuple;
+
+template <> struct Tuple<> {};
+
+template <class Head, class... Tail>
+struct Tuple<Head, Tail...> {
+    Head head;
+    Tuple<Tail...> tail;
+    constexpr Tuple(Head h, Tail... t) : head(h), tail(t...) {}
+};
+
+// TODO: write get<I>(t) returning a reference to the I-th element.
+// Reads AND writes must work: get<0>(t) = 7;
+```
+
+```cpp
+template <class... Ts> struct Tuple;
+
+template <> struct Tuple<> {};
+
+template <class Head, class... Tail>
+struct Tuple<Head, Tail...> {
+    Head head;
+    Tuple<Tail...> tail;
+    constexpr Tuple(Head h, Tail... t) : head(h), tail(t...) {}
+};
+
+template <std::size_t I, class Head, class... Tail>
+constexpr auto& get(Tuple<Head, Tail...>& t) {
+    if constexpr (I == 0) {
+        return t.head;
+    } else {
+        return get<I - 1>(t.tail);
+    }
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    Tuple<int, std::string, double> t(42, std::string("mid"), 2.5);
+    assert(get<0>(t) == 42);
+    assert(get<1>(t) == "mid");
+    assert(get<2>(t) == 2.5);
+    get<0>(t) = 7;                 // must return a real reference
+    get<1>(t) += "dle";
+    assert(get<0>(t) == 7);
+    assert(get<1>(t) == "middle");
+    static_assert(std::is_same_v<decltype(get<2>(t)), double&>);
+    static_assert(std::is_same_v<decltype(get<1>(t)), std::string&>);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** This is `std::tuple`'s core idea in miniature: storage by recursive nesting, access by compile-time index arithmetic. Two details carry the exercise. First, the index must be a template parameter because each `I` selects a *different type* — a runtime parameter could never do that. Second, `if constexpr` is essential: with a plain `if`, both branches are compiled for every instantiation, and at `I == 0` the else-branch would instantiate `get<-1>` (which underflows `std::size_t` and recurses forever), while the two branches would also disagree on return type. `if constexpr` discards the untaken branch entirely, so `auto&` deduces from exactly one `return`. An out-of-range index fails loudly — `get<3>` eventually tries to recurse into `Tuple<>`, which no overload matches. The real `std::tuple` adds const/rvalue overloads and usually flattens storage via multiple inheritance for compile-time speed, but the indexing principle is the one you just wrote.
+
+## challenge: factorial computed by the compiler
+tags: templates, nttp, constexpr
+track: core
+difficulty: easy
+
+Write `factorial<N>()` — a `constexpr` function template whose only parameter is a non-type template parameter `unsigned N` — returning the factorial of `N` as `unsigned long long`. The result must be a constant expression: the harness checks it with `static_assert`, meaning the compiler itself does the multiplication. Recurse on `N` at compile time.
+
+hint: The value travels in the template argument list, not the parameter list: `factorial<5>()`, no runtime arguments at all.
+hint: A plain ternary `N == 0 ? 1 : N * factorial<N - 1>()` cannot terminate — instantiating `factorial<0>` would still instantiate `factorial<0 - 1>`, and `0u - 1` wraps to 4294967295. You need the recursion itself to stop at compile time.
+hint: `if constexpr (N == 0) return 1; else return N * factorial<N - 1>();` — the discarded branch is never instantiated, so the template recursion bottoms out.
+
+```cpp
+// starter
+// factorial<N>() -> unsigned long long, usable inside static_assert.
+// N is a non-type template parameter (unsigned).
+// TODO: write the constexpr function template.
+```
+
+```cpp
+template <unsigned N>
+constexpr unsigned long long factorial() {
+    if constexpr (N == 0) {
+        return 1;
+    } else {
+        return N * factorial<N - 1>();
+    }
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    static_assert(factorial<0>() == 1);
+    static_assert(factorial<1>() == 1);
+    static_assert(factorial<5>() == 120);
+    static_assert(factorial<10>() == 3628800ULL);
+    static_assert(factorial<20>() == 2432902008176640000ULL);  // still fits in 64 bits
+    assert(factorial<6>() == 720);                             // and callable at run time
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Each `factorial<N>` is a distinct function stamped out at compile time, and because the function is `constexpr` with a constant `N`, the whole chain collapses into a single literal — `static_assert` proves no runtime work remains. The subtle part is termination: templates are instantiated *before* any runtime logic runs, so a regular `if` or ternary would still mention `factorial<N - 1>` in the `N == 0` instantiation, and unsigned wraparound sends `0 - 1` to `4294967295` — an instantiation avalanche that dies at the compiler's depth limit. `if constexpr` fixes this because the false branch of a discarded statement is not instantiated. Before C++17 the same problem was solved with a full specialization `template <> struct Factorial<0>` acting as the base case; `if constexpr` keeps base case and recursion in one readable body. `factorial<20>` is the largest that fits in 64 bits — one more multiplication would silently wrap in a non-constant context, but overflow in a constant expression is a compile error, another free safety net.
+
+## challenge: is it a container? ask a concept
+tags: templates, concepts
+track: core
+difficulty: medium
+
+Write a concept `Container` that holds when a `const T&` supports `t.begin()` and `t.end()`. Then write two overloads of `describe`, selected by requires-clauses: for containers, return `"container[N]"` where `N` is the element count (`std::to_string`); for everything else, return `"scalar"`. Both overloads take `const T&`.
+
+hint: A `requires` expression lists the expressions that must compile: `requires(const T& t) { t.begin(); t.end(); }` — that whole thing is the concept's definition.
+hint: Two function templates with the same signature can coexist if their requires-clauses are mutually exclusive: one `requires Container<T>`, the other `requires (!Container<T>)`.
+hint: Count elements without assuming `.size()` exists: `std::distance(value.begin(), value.end())` works for anything with begin/end.
+
+```cpp
+// starter
+// concept Container: t.begin() and t.end() valid on a const T&.
+// describe(x) -> "container[N]" for containers, "scalar" otherwise.
+// TODO: define the concept, then the two requires-constrained overloads.
+```
+
+```cpp
+template <class T>
+concept Container = requires(const T& t) {
+    t.begin();
+    t.end();
+};
+
+template <class T>
+    requires Container<T>
+std::string describe(const T& value) {
+    auto n = std::distance(value.begin(), value.end());
+    return "container[" + std::to_string(n) + "]";
+}
+
+template <class T>
+    requires (!Container<T>)
+std::string describe(const T&) {
+    return "scalar";
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    std::vector<int> v{1, 2, 3, 4};
+    std::list<double> l{1.5, 2.5};
+    std::map<int, int> m{{1, 1}};
+    assert(describe(v) == "container[4]");
+    assert(describe(l) == "container[2]");
+    assert(describe(m) == "container[1]");
+    assert(describe(42) == "scalar");
+    assert(describe(3.14) == "scalar");
+    assert(describe(std::string("abc")) == "container[3]");  // begin/end exist, so it counts
+    static_assert(Container<std::vector<int>>);
+    static_assert(!Container<int>);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The concept is duck typing made explicit: `Container<T>` is true exactly when the two expressions inside the `requires` block would compile for a `const T&` — no registration, no inheritance, and the trait works for any past or future type with the right shape. Probing on `const T&` matters: it means detection requires const-callable `begin()`/`end()`, which every real container provides. The two overloads are distinguished *only* by their requires-clauses; because `Container<T>` and `!Container<T>` can never both hold, exactly one candidate survives overload resolution for any argument — the C++20 replacement for `enable_if` pairs. Note the honest surprise in the harness: `std::string` has `begin`/`end`, so this trait calls it a container — structural detection answers the question you actually asked, not the one you had in mind. Counting with `std::distance` instead of `.size()` keeps the requirement set minimal.
+
+## challenge: teach Pair that a literal means std::string
+tags: templates, ctad
+track: core
+difficulty: easy
+
+The starter defines an aggregate `Pair<A, B>`. Thanks to C++20 aggregate CTAD, `Pair p{1, 2.5}` already deduces `Pair<int, double>` — but `Pair p{"port", 8080}` deduces `A = const char*`, which is almost never what you want. Write deduction guides so string literals deduce as `std::string` in either position: `Pair{"port", 8080}` → `Pair<std::string, int>`, `Pair{1, "one"}` → `Pair<int, std::string>`, `Pair{"k", "v"}` → `Pair<std::string, std::string>`. Plain cases like `Pair{1, 2.5}` must keep working — and there is a trap there: the implicit aggregate deduction candidate exists only while you have written *no* guides of your own.
+
+hint: A deduction guide looks like a constructor declaration with a trailing arrow: `Pair(X, Y) -> Pair<...>;` at namespace scope. It only steers deduction — it adds no constructor. And the moment you declare one, implicit aggregate CTAD is gone: restore the plain case yourself with `template <class A, class B> Pair(A, B) -> Pair<A, B>;`.
+hint: You need a guide per literal position: first argument `const char*`, second argument `const char*`. Keep the other position generic — partial ordering prefers these over the generic `(A, B)` guide when a literal is present.
+hint: `Pair{"k", "v"}` matches both single-position guides ambiguously — add a fourth, non-template guide `Pair(const char*, const char*) -> Pair<std::string, std::string>;` which wins because non-templates beat templates.
+
+```cpp
+// starter
+template <class A, class B>
+struct Pair {
+    A first;
+    B second;
+};
+
+// TODO: add deduction guides so that string literals deduce as std::string:
+//   Pair{"port", 8080}  ->  Pair<std::string, int>
+//   Pair{1, "one"}      ->  Pair<int, std::string>
+//   Pair{"k", "v"}      ->  Pair<std::string, std::string>
+```
+
+```cpp
+template <class A, class B>
+struct Pair {
+    A first;
+    B second;
+};
+
+template <class A, class B> Pair(A, B) -> Pair<A, B>;  // restore the plain case
+template <class B> Pair(const char*, B) -> Pair<std::string, B>;
+template <class A> Pair(A, const char*) -> Pair<A, std::string>;
+Pair(const char*, const char*) -> Pair<std::string, std::string>;
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    Pair p1{"port", 8080};
+    static_assert(std::is_same_v<decltype(p1), Pair<std::string, int>>);
+    Pair p2{1, "one"};
+    static_assert(std::is_same_v<decltype(p2), Pair<int, std::string>>);
+    Pair p3{"k", "v"};
+    static_assert(std::is_same_v<decltype(p3), Pair<std::string, std::string>>);
+    Pair p4{1, 2.5};                       // aggregate CTAD still does the plain cases
+    static_assert(std::is_same_v<decltype(p4), Pair<int, double>>);
+    assert(p1.first.size() == 4 && p1.second == 8080);
+    assert(p2.second == "one");
+    assert(p3.first + p3.second == "kv");
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Without guides, deduction takes the arguments literally: a string literal is a `const char[5]` that decays to `const char*`, so `Pair{"port", 8080}` would give you a pair holding a raw pointer — comparisons become pointer comparisons and lifetime bugs follow. A deduction guide rewrites the conclusion without touching the class: `template <class B> Pair(const char*, B) -> Pair<std::string, B>` says "when the first argument is a `const char*`, deduce `std::string` instead." The big trap is the generic guide: the standard adds the implicit aggregate deduction candidate only when *no* user guides exist, so declaring your first guide silently breaks `Pair{1, 2.5}` until you restore `Pair(A, B) -> Pair<A, B>` yourself (g++ diagnoses this as "deduction failed" at the innocent-looking call site). Overload resolution then sorts the rest: partial ordering prefers `(const char*, B)` over `(A, B)` when a literal is present, and the two-literal call — ambiguous between the two single-position guides — goes to the non-template fourth guide, since non-templates beat templates. Initialization stays plain aggregate init; the guides only pick `A` and `B`, and `const char*` converts to `std::string` member-wise.
+
+## challenge: one template, three formats
+tags: templates, if-constexpr
+track: core
+difficulty: medium
+
+Write a function template `stringify(value)` returning `std::string`, dispatching on the type at compile time with `if constexpr`: for integral types return `"int:" + std::to_string(value)`; for floating-point types return `"real:" + std::to_string(value)`; for anything else assume it is string-like and return `"str:"` followed by the value. A runtime `if` cannot work here — figure out why before reaching for the hints.
+
+hint: Test the type, not the value: `std::is_integral_v<T>` and `std::is_floating_point_v<T>` from `<type_traits>` are compile-time answers.
+hint: With a plain `if`, every branch must compile for every `T` — and `std::to_string(std::string)` does not exist, nor does `"str:" + 42`. The dispatch has to *remove* branches, not skip them.
+hint: `if constexpr (std::is_integral_v<T>) ... else if constexpr (std::is_floating_point_v<T>) ... else ...` — discarded branches are never instantiated, so each `T` only compiles the code that makes sense for it.
+
+```cpp
+// starter
+// stringify(42)                  -> "int:42"
+// stringify(2.5)                 -> "real:2.500000"
+// stringify(std::string("abc"))  -> "str:abc"
+// TODO: one function template, branches selected at compile time.
+template <class T>
+std::string stringify(const T& value) {
+    return {}; // TODO
+}
+```
+
+```cpp
+template <class T>
+std::string stringify(const T& value) {
+    if constexpr (std::is_integral_v<T>) {
+        return "int:" + std::to_string(value);
+    } else if constexpr (std::is_floating_point_v<T>) {
+        return "real:" + std::to_string(value);
+    } else {
+        return std::string("str:") + value;
+    }
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    assert(stringify(42) == "int:42");
+    assert(stringify(-7L) == "int:-7");
+    assert(stringify(true) == "int:1");            // bool is integral
+    assert(stringify(2.5) == "real:2.500000");     // std::to_string uses %f
+    assert(stringify(0.5f) == "real:0.500000");
+    assert(stringify(std::string("abc")) == "str:abc");
+    assert(stringify("lit") == "str:lit");         // char array lands in the else branch
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The whole point is *discarded statements*: inside a template, the false branches of `if constexpr` are not instantiated, so `std::to_string(value)` is only ever compiled when `T` is arithmetic, and `std::string("str:") + value` only when it isn't. Swap in a runtime `if` and the function stops compiling for every type, because all three branches would have to type-check simultaneously — `std::to_string` has no overload for `std::string`, and `"str:" + 42` is pointer arithmetic, not concatenation. This is the C++17 idiom that replaced tag dispatch and heaps of SFINAE overloads with straight-line code. Two harness details worth noticing: `bool` is an integral type, so `true` prints as `int:1` (add an `is_same_v<T, bool>` branch first if you want `bool` treated specially), and a string literal arrives as `const char[4]`, is neither integral nor floating, and decays to `const char*` in the concatenation — the else branch quietly handles both string flavors.
+
+## challenge: count live instances per type with CRTP
+tags: templates, crtp
+track: core
+difficulty: medium
+
+Write a CRTP base `Counted<Derived>` that tracks how many instances of each derived class are currently alive. Requirements: a static `alive()` returning the current count; the default constructor and the copy constructor both increment; the destructor decrements. The crucial property: `struct Widget : Counted<Widget>` and `struct Gadget : Counted<Gadget>` must each get an independent counter.
+
+hint: The base is a class template over the derived type: `template <class Derived> class Counted`. Every instantiation is a distinct class — which is exactly what makes the counters independent.
+hint: A static data member of a class template is per-instantiation, so `Counted<Widget>::count_` and `Counted<Gadget>::count_` are different variables. `inline static int count_ = 0;` avoids an out-of-line definition.
+hint: Count every way an object can be born or die: default ctor `++`, copy ctor `++` (a copy is a new instance — forgetting this is the classic bug), dtor `--`. Copy *assignment* changes nothing: no object is created or destroyed.
+
+```cpp
+// starter
+// Counted<Derived>: static alive() -> current live instance count.
+// Default ctor and copy ctor increment; dtor decrements.
+// Widget and Gadget below must each have their own counter.
+// TODO: write the CRTP base class template.
+```
+
+```cpp
+template <class Derived>
+class Counted {
+public:
+    static int alive() { return count_; }
+protected:
+    Counted() { ++count_; }
+    Counted(const Counted&) { ++count_; }
+    ~Counted() { --count_; }
+private:
+    inline static int count_ = 0;
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+struct Widget : Counted<Widget> {};
+struct Gadget : Counted<Gadget> {};
+int main() {
+    assert(Widget::alive() == 0 && Gadget::alive() == 0);
+    Widget a, b;
+    assert(Widget::alive() == 2);
+    assert(Gadget::alive() == 0);          // independent counter per derived type
+    {
+        Gadget g;
+        Widget c(a);                       // copies count too
+        assert(Widget::alive() == 3);
+        assert(Gadget::alive() == 1);
+    }
+    assert(Widget::alive() == 2);          // scope exit ran the destructors
+    assert(Gadget::alive() == 0);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The counter works because a class template's static members are *per instantiation*: `Counted<Widget>` and `Counted<Gadget>` are two unrelated classes, each with its own `count_` — a plain non-template base would lump every derived type into one number. That is the CRTP dividend: the derived type parameterizes the base, so type-keyed state falls out for free, with no map lookups and no RTTI. The details are where the marks are earned. The copy constructor must increment — if you omit it, the compiler-generated copy constructor is used, the count is not bumped, and the destructor of the copy later drives the counter negative. Copy assignment is correctly left alone since assignment neither creates nor destroys an instance. The constructors and destructor are `protected`, declaring that `Counted` is a mixin, not a standalone object — and the destructor is deliberately non-virtual, which is safe here precisely because nobody can `delete` through a `Counted<T>*`. Interestingly, this base never even calls `static_cast<Derived*>(this)`: sometimes CRTP's value is purely in the per-type instantiation.
+
+## challenge: a sort wrapper that rejects the unsortable
+tags: templates, concepts
+track: core
+difficulty: medium
+
+`std::sort` on the wrong container fails with a wall of iterator errors from deep inside the algorithm. Fix the diagnostics at the boundary: define a concept `SortableRange` that holds when `std::begin(r)` yields a random-access iterator that satisfies `std::sortable`, and `std::end(r)` is valid. Then write `sortInPlace(r)` constrained on that concept, sorting the range with `std::sort`. Vectors, `std::array`, and raw arrays must pass; `std::list` and non-ranges must be rejected *by the constraint*.
+
+hint: Constrain on evidence, not on names: a `requires` expression can demand that `std::begin(r)` compiles AND that its type models a standard iterator concept.
+hint: A compound requirement checks an expression's type: `{ std::begin(r) } -> std::random_access_iterator;`. Add `requires std::sortable<decltype(std::begin(r))>;` for element movability/comparability — `std::sortable` alone is not enough, since a `std::list<int>` iterator satisfies it.
+hint: `template <SortableRange R> void sortInPlace(R& r) { std::sort(std::begin(r), std::end(r)); }` — using `std::begin`/`std::end` (not members) is what lets raw arrays through.
+
+```cpp
+// starter
+// concept SortableRange: std::begin(r) is a random-access, sortable iterator,
+// std::end(r) valid. sortInPlace(r) sorts, and won't even match a std::list.
+// TODO: define the concept and the constrained function template.
+```
+
+```cpp
+template <class R>
+concept SortableRange = requires(R& r) {
+    { std::begin(r) } -> std::random_access_iterator;
+    requires std::sortable<decltype(std::begin(r))>;
+    std::end(r);
+};
+
+template <SortableRange R>
+void sortInPlace(R& r) {
+    std::sort(std::begin(r), std::end(r));
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    std::vector<int> v{5, 3, 1, 4, 2};
+    sortInPlace(v);
+    assert((v == std::vector<int>{1, 2, 3, 4, 5}));
+    std::array<double, 3> a{2.5, 0.5, 1.5};
+    sortInPlace(a);
+    assert(a[0] == 0.5 && a[2] == 2.5);
+    int raw[4] = {9, 7, 8, 6};
+    sortInPlace(raw);                      // std::begin works on raw arrays
+    assert(raw[0] == 6 && raw[3] == 9);
+    std::vector<std::string> w{"pear", "fig"};
+    sortInPlace(w);
+    assert(w[0] == "fig");
+    static_assert(SortableRange<std::vector<int>>);
+    static_assert(SortableRange<int[8]>);
+    static_assert(!SortableRange<std::list<int>>);  // bidirectional only: rejected up front
+    static_assert(!SortableRange<int>);             // no begin/end at all
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The concept encodes `std::sort`'s real preconditions at the interface instead of letting them explode inside `<algorithm>`. Each requirement pulls weight: `{ std::begin(r) } -> std::random_access_iterator` demands both that the expression compiles and that its type models random access — which is what kills `std::list`, whose bidirectional iterators would otherwise slip through, since `std::sortable` (perhaps surprisingly) does not require random access, only that elements can be permuted and compared. The nested `requires std::sortable<...>` adds exactly that movability/comparability check, mirroring how `std::ranges::sort` itself is constrained (`random_access_iterator` + `sortable`). Using free `std::begin`/`std::end` rather than member calls is what admits raw C arrays. The payoff shows up in the error message: calling `sortInPlace(list)` now reports "constraints not satisfied: SortableRange" at the call site, one line, instead of a template backtrace from the sorting internals — and the `static_assert`s in the harness demonstrate the concept doubles as a queryable type trait.
+
+## challenge: convert to any container — template template parameters
+tags: templates, template-template
+track: core
+difficulty: hard
+
+Write `convertTo<Target>(src)` — a function template that copies a `const std::vector<T>&` into a *different container template* chosen by the caller: `convertTo<std::deque>(v)` yields `std::deque<int>`, `convertTo<std::list>(v)` yields `std::list<int>`, `convertTo<std::set>(v)` yields `std::set<int>`. The caller names the template itself, not a full type — so the parameter must be a template template parameter, and your function applies it to `T`. Construct the result from the iterator range `src.begin(), src.end()`.
+
+hint: A normal type parameter can hold `std::deque<int>`, but not `std::deque` itself. Declaring "a parameter that is a template" looks like: `template <template <class...> class Target, ...>`.
+hint: Declare the pack form `template <class...> class Target`, not `template <class> class Target`: `std::deque`, `std::list`, and `std::set` all carry extra defaulted parameters (allocator, comparator), and since C++17 the variadic form matches them all.
+hint: `template <template <class...> class Target, class T> Target<T> convertTo(const std::vector<T>& src) { return Target<T>(src.begin(), src.end()); }` — `T` is still deduced from `src`; only `Target` is explicit at the call.
+
+```cpp
+// starter
+// convertTo<std::deque>(vec)  -> std::deque<T> with the same elements
+// convertTo<std::list>(vec)   -> std::list<T>
+// convertTo<std::set>(vec)    -> std::set<T> (duplicates collapse)
+// TODO: write the function template taking a template template parameter.
+```
+
+```cpp
+template <template <class...> class Target, class T>
+Target<T> convertTo(const std::vector<T>& src) {
+    return Target<T>(src.begin(), src.end());
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    std::vector<int> v{1, 2, 3};
+    auto d = convertTo<std::deque>(v);
+    static_assert(std::is_same_v<decltype(d), std::deque<int>>);
+    assert(d.size() == 3 && d.front() == 1 && d.back() == 3);
+    auto l = convertTo<std::list>(v);
+    static_assert(std::is_same_v<decltype(l), std::list<int>>);
+    assert(std::equal(v.begin(), v.end(), l.begin()));
+    std::vector<std::string> words{"beta", "alpha"};
+    auto ws = convertTo<std::set>(words);              // element type follows the source
+    static_assert(std::is_same_v<decltype(ws), std::set<std::string>>);
+    assert(*ws.begin() == "alpha");
+    auto s = convertTo<std::set>(std::vector<int>{3, 1, 3, 2});
+    assert((s == std::set<int>{1, 2, 3}));             // duplicates collapsed
+    std::puts("PASS");
+}
+```
+
+**Editorial:** A template template parameter abstracts over the container *family* rather than a finished type: the caller supplies `std::deque` — a recipe still waiting for arguments — and the function applies it to the element type it deduced from the source. Neither a type parameter nor a value parameter can express that. The declaration syntax is the hurdle: `template <template <class...> class Target, class T>` reads inside-out as "Target is itself a template taking any number of type parameters." The pack matters — `std::deque` is really `template <class T, class Allocator>` and `std::set` drags a comparator too, so a strict `template <class> class` parameter wouldn't match them (C++17 relaxed matching lets the variadic form accept templates with defaulted extras). Note the mixed deduction at the call site: `Target` must be explicit because nothing in the arguments mentions it, while `T` is still deduced from `src` — explicit-then-deduced ordering is a common pattern. In modern code CTAD or an `auto`-returning lambda sometimes replaces this technique, but rebinding a container family — as allocators and `std::pmr` do internally — still runs on template template parameters.
 
 ## fact: Single Responsibility — one reason to change
 tags: solid, srp, cohesion
@@ -31845,6 +35560,854 @@ int main() {
 
 **Editorial:** The comparison `data[i] >= t` is already a `0`/`1` value, so `count += (data[i] >= t)` folds the decision into arithmetic — there is no per-element conditional jump to mispredict. On random data the naive `if (...) ++count` mispredicts about half the time at ~15-20 cycles per miss, which can cost more than the loop's real work; the branchless form keeps the pipeline full and lets the compiler emit a `setcc`/`cmov` and even SIMD-widen the reduction (comparing and summing several lanes at once). Comparing directly rather than testing `data[i] - t >= 0` avoids signed-overflow UB for far-apart values. The remaining `i < n` branch is loop control and is predicted essentially perfectly. O(n) time, O(1) space.
 
+## fact: The sockets API is five calls
+tags: networking, sockets
+track: core
+
+Every TCP server ever written is the same skeleton: `socket()` makes an endpoint (a file descriptor), `bind()` attaches it to an address and port, `listen()` turns it into a passive socket with a queue of incoming connections, and `accept()` pops one completed connection off that queue — returning a **new** fd for the conversation. Clients skip bind/listen/accept and just `connect()`.
+
+The listening fd and the connection fds are different objects with different jobs. You `accept()` on one, `read()`/`write()` on the others.
+
+```cpp
+int lfd = socket(AF_INET, SOCK_STREAM, 0);
+sockaddr_in addr{};
+addr.sin_family = AF_INET;
+addr.sin_addr.s_addr = htonl(INADDR_ANY);
+addr.sin_port = htons(8080);
+bind(lfd, reinterpret_cast<sockaddr*>(&addr), sizeof addr);
+listen(lfd, 128);                    // backlog of pending connections
+int cfd = accept(lfd, nullptr, nullptr);  // NEW fd per client
+// read()/write() on cfd; keep accept()ing on lfd
+```
+
+## fact: TCP vs UDP — a byte stream vs stamped postcards
+tags: networking, tcp, udp
+track: core
+
+TCP (`SOCK_STREAM`) gives you a connection-oriented, reliable, ordered **byte stream**: bytes arrive exactly once, in order, or the connection errors out. The price is handshakes, retransmission delays, and head-of-line blocking — one lost segment stalls everything behind it.
+
+UDP (`SOCK_DGRAM`) gives you connectionless **datagrams**: each `sendto()` becomes one packet that may arrive out of order, duplicated, or not at all — but message boundaries are preserved, and there is no connection state or retransmission latency. That is why market data feeds are UDP multicast and order entry is TCP: the feed tolerates a gap (you re-request or recover), but an order must not be lost.
+
+Rule of thumb: TCP when you need everything and can wait; UDP when you need it *now* and can handle loss yourself.
+
+## fact: The TCP handshake, teardown, and why TIME_WAIT exists
+tags: networking, tcp
+track: core
+
+Setup is the three-way handshake: SYN → SYN-ACK → ACK. Both sides pick random initial sequence numbers and agree on options (window scale, MSS, SACK). Only after this does `connect()` return and `accept()` have something to deliver.
+
+Teardown is four-way: each direction closes independently with its own FIN/ACK pair (that's what makes half-close, `shutdown(fd, SHUT_WR)`, possible). The side that closes **first** enters `TIME_WAIT` and lingers for 2×MSL (typically 60s on Linux). Two reasons: (1) if its last ACK is lost, the peer retransmits FIN and someone must still be there to re-ACK it; (2) it keeps the port 4-tuple quarantined so delayed old segments can't be mistaken for data on a fresh connection reusing the same tuple.
+
+TIME_WAIT is not a bug or a leak — it is correctness. Servers that churn thousands of short connections manage it (connection pooling, `SO_REUSEADDR`, letting the *client* close first) rather than disabling it.
+
+## fact: Blocking vs non-blocking sockets and EAGAIN
+tags: networking, nonblocking
+track: core
+
+By default sockets **block**: `read()` sleeps until data arrives, `write()` sleeps until the kernel buffer has room, `accept()` sleeps until a connection lands. Fine for one connection per thread; fatal for an event loop.
+
+Set `O_NONBLOCK` and those calls return immediately. If the operation *would have* blocked, they fail with `errno == EAGAIN` (a.k.a. `EWOULDBLOCK` — same value on Linux). That is not an error; it's the kernel saying "nothing for you right now, come back when I tell you." Non-blocking I/O only makes sense paired with a readiness notifier (epoll/kqueue) that tells you *when* to come back.
+
+```cpp
+int flags = fcntl(fd, F_GETFL, 0);
+fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+ssize_t n = read(fd, buf, sizeof buf);
+if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    // not an error: no data yet — wait for readability, then retry
+}
+```
+
+Also remember: a non-blocking `write()` can accept *part* of your buffer. Track how much was taken and resubmit the rest when writable.
+
+## fact: select → poll → epoll/kqueue → io_uring
+tags: networking, multiplexing
+track: core
+
+The evolution of "watch N sockets at once" is an evolution in *who does the scanning*:
+
+- **select** (1983): pass a bitmask of fds, kernel scans them all, you scan the result. O(n) per call both ways, hard `FD_SETSIZE` cap (typically 1024), and the fd_set is destroyed each call so you rebuild it every time.
+- **poll**: same O(n) model but an array of `pollfd` instead of a bitmask — no 1024 cap, no rebuild. Still linear.
+- **epoll** (Linux) / **kqueue** (BSD/macOS): register interest *once*; the kernel maintains the interest list and hands you only the fds that are ready. `epoll_wait` is O(ready), not O(watched). This is what made 100k+ concurrent connections practical and what every event loop (libuv, asio, nginx) sits on.
+- **io_uring**: goes past *readiness* to *completion*. You submit operations (read, write, accept...) into a shared ring buffer and reap completions from another — often without a syscall in the hot path. You no longer say "tell me when I can read"; you say "read it and tell me when it's done."
+
+Interview sound bite: select/poll are stateless-per-call and linear; epoll/kqueue are stateful readiness; io_uring is async completion.
+
+## fact: Edge-triggered vs level-triggered readiness
+tags: networking, epoll
+track: core
+
+**Level-triggered** (the default for epoll, and the only mode of select/poll): as long as the socket *has* readable data, every wait call reports it readable. Forgiving — read some bytes, leave the rest, you'll be told again.
+
+**Edge-triggered** (`EPOLLET`): you are notified only on the *transition* from not-ready to ready, i.e., when new bytes arrive. If you read only part of the buffer and go back to waiting, no new notification comes for the remainder — the data just sits there and the connection hangs.
+
+The ET contract is therefore: on every wakeup, loop `read()`/`accept()` until you get `EAGAIN`. ET's payoff is fewer wakeups and no re-scanning of half-drained sockets under load, which is why high-performance servers use it — but only with non-blocking fds and drain-until-EAGAIN discipline.
+
+```cpp
+epoll_event ev{};
+ev.events = EPOLLIN | EPOLLET;   // edge-triggered: drain or hang
+ev.data.fd = cfd;
+epoll_ctl(epfd, EPOLL_CTL_ADD, cfd, &ev);
+// on wakeup: while (read(cfd, ...) > 0) {} until EAGAIN
+```
+
+## fact: Nagle's algorithm and TCP_NODELAY
+tags: networking, tcp, latency, hft
+track: core
+
+Nagle's algorithm batches small writes: if there is unacknowledged data in flight, the kernel holds new small segments and coalesces them until an ACK returns. Great for telnet in 1984 — it stops a torrent of 1-byte packets. Terrible for latency-sensitive request/response: your 40-byte order can sit in the kernel waiting for an ACK, and it interacts pathologically with **delayed ACK** on the other side (each waiting for the other → bursts of ~40ms stalls).
+
+`TCP_NODELAY` disables Nagle: every write goes out as soon as the window allows. In HFT, trading gateways set it unconditionally — a predictable extra small packet beats an unpredictable multi-millisecond stall every time. Any low-latency RPC (Redis, gRPC, game servers) does the same.
+
+```cpp
+int one = 1;
+setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+```
+
+Complementary trick: coalesce in *your* code (build the full message, one `write()`) so you don't need Nagle to fix a chatty writer.
+
+## fact: SO_REUSEADDR vs SO_REUSEPORT
+tags: networking, sockets
+track: core
+
+`SO_REUSEADDR` answers a restart problem: after a server dies, its port lingers in `TIME_WAIT`, and a plain `bind()` fails with `EADDRINUSE` until it expires. Setting `SO_REUSEADDR` before `bind()` lets you rebind while old connections drain. Practically every server sets it; forgetting it is the classic "can't restart my server for a minute" bug.
+
+`SO_REUSEPORT` (Linux 3.9+) is a different beast: it lets **multiple live sockets** — typically one per worker process/thread — bind the *same* address and port, and the kernel load-balances incoming connections (or UDP datagrams) across them by 4-tuple hash. That removes the single shared accept queue and the thundering-herd/lock contention on it. nginx and modern multi-worker servers use it for linear accept scaling.
+
+```cpp
+int one = 1;
+setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one); // rebind past TIME_WAIT
+setsockopt(lfd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof one); // N workers, same port
+```
+
+## fact: Endianness on the wire — htons and friends
+tags: networking, endianness
+track: core
+
+Network byte order is **big-endian**: most significant byte first. x86 and ARM (as commonly run) are little-endian. Every multi-byte integer that touches the wire — ports and addresses in `sockaddr_in`, lengths and IDs in your own protocol headers — must be converted, or two little-endian hosts will happily agree on the wrong numbers the moment a big-endian peer, a spec-conformant implementation, or a packet capture enters the picture.
+
+The four converters: `htons`/`htonl` (host-to-network, 16/32-bit) and `ntohs`/`ntohl` (network-to-host). On a little-endian machine they byte-swap — `htons(0x1234) == 0x3412` — and on a big-endian machine they compile to nothing, which is exactly why you always write them: the code is then correct *everywhere*.
+
+```cpp
+addr.sin_port = htons(8080);          // 0x1F90 -> wire order
+uint32_t len_net;
+memcpy(&len_net, buf, 4);             // 4 wire bytes
+uint32_t len = ntohl(len_net);        // back to host order
+```
+
+C++20/23 add `std::endian` and `std::byteswap` for the same job in pure C++.
+
+## fact: Never memcpy a struct onto the wire
+tags: networking, serialization
+track: core
+
+`send(fd, &msg, sizeof msg, 0)` looks like free serialization. It isn't — it ships your compiler's private memory layout as if it were a protocol. Three things break it: **padding** (the compiler inserts invisible bytes to align members — and their content is indeterminate, so you may also leak stack garbage), **endianness** (little-endian ints are backwards on the wire), and **ABI drift** (a different compiler, architecture, or packing flag reads different offsets).
+
+```cpp
+struct Msg {
+    uint32_t seq;    // offset 0
+    uint16_t flags;  // offset 4
+    uint32_t price;  // offset 8 — after 2 bytes of padding!
+};
+static_assert(sizeof(Msg) == 12);  // not 10: 2 padding bytes hide inside
+```
+
+The fix is explicit serialization: write each field at a defined offset in a defined byte order (`htonl` per field into a byte buffer), or use a schema'd format (protobuf, FlatBuffers, SBE). Exchange protocols that *do* specify C-like layouts pin everything down — fixed offsets, specified endianness, `#pragma pack` — and even then you serialize field-by-field at the boundary, not by trusting `sizeof`.
+
+## fact: Zero-copy — sendfile and MSG_ZEROCOPY
+tags: networking, zero-copy
+track: core
+
+A naive file-to-socket loop copies every byte four times: disk → page cache → your buffer (`read`), your buffer → socket buffer (`send`), plus two user/kernel crossings per chunk. For a static-file server or proxy, the user-space detour adds nothing.
+
+`sendfile(out_fd, in_fd, ...)` moves data page-cache-to-socket entirely inside the kernel — no user-space copy, no double syscall per chunk. It's why nginx serves static content at line rate. `splice()` generalizes it through pipes.
+
+`MSG_ZEROCOPY` (Linux 4.14+) attacks the *send-side* copy for ordinary in-memory buffers: `send(fd, buf, n, MSG_ZEROCOPY)` pins your pages and the NIC reads them directly via DMA; the kernel posts a completion on the error queue when it's done — until then you must not touch `buf`. That deferred-completion bookkeeping has real overhead, so it only wins for large transfers (rule of thumb: ~10 KB+); for small writes the plain copy is faster.
+
+The theme: copies and syscalls, not bandwidth, are the tax. Zero-copy techniques remove the memcpy; io_uring removes the syscalls; kernel bypass removes the kernel.
+
+## fact: Kernel bypass — DPDK and ef_vi
+tags: networking, kernel-bypass, hft
+track: core
+
+The kernel network stack costs microseconds: interrupt, context switch, sk_buff allocation, protocol demux, socket queue, wakeup. A syscall-based echo hovers around tens of microseconds round trip. HFT budgets are sub-microsecond wire-to-wire — so the kernel has to go.
+
+Kernel bypass maps the NIC's RX/TX rings straight into user space and **polls** them from a pinned, isolated core — no interrupts, no syscalls, no copies:
+
+- **DPDK** (Intel-originated, portable): takes over the whole NIC via a userspace poll-mode driver, hugepage-backed buffer pools, burst APIs. You bring (or buy) your own TCP/IP stack.
+- **ef_vi / Onload** (Solarflare/Xilinx/AMD NICs — the HFT house standard): `ef_vi` is the raw layer-2 API for hand-rolled paths; Onload is a drop-in userspace TCP/UDP stack behind the ordinary sockets API — bypass without rewriting the app.
+
+Costs, and why interviews probe it: a burned 100%-CPU polling core per queue, no kernel firewalling/netfilter/tcpdump on that traffic, and you own reliability. Typical shape: market data and order path on bypass; everything else through the kernel. Further down the rabbit hole, the same logic moves the strategy itself into FPGA/NIC hardware.
+
+## quiz: What does a successful accept() return?
+tags: networking, sockets
+track: core
+
+```cpp
+int lfd = socket(AF_INET, SOCK_STREAM, 0);
+bind(lfd, ...); listen(lfd, 128);
+int r = accept(lfd, nullptr, nullptr);
+```
+
+- [ ] 0, and the listening socket `lfd` becomes the connection
+- [x] A brand-new file descriptor for this one connection; `lfd` keeps listening
+- [ ] The client's port number
+- [ ] It returns `lfd` itself, now marked connected
+
+> `accept()` pops one completed connection off the listen queue and returns a *new* fd dedicated to that peer. The listening socket is untouched and you keep calling `accept()` on it for further clients. One listening fd, N connection fds — mixing them up is a classic beginner segfault-by-design.
+
+## quiz: A UDP peer sends a 100-byte datagram; you call recvfrom(fd, buf, 40, 0). What happens?
+tags: networking, udp
+track: core
+
+- [ ] You get 40 bytes now and the remaining 60 on the next call
+- [ ] The call fails with EMSGSIZE and nothing is consumed
+- [x] You get 40 bytes; the other 60 are discarded forever
+- [ ] The kernel blocks until your buffer is large enough
+
+> UDP is datagram-oriented: one `recvfrom` consumes one whole datagram. Whatever doesn't fit in your buffer is silently thrown away (you can detect it with `MSG_TRUNC`). There is no "rest of the message" — unlike TCP, where unread stream bytes stay queued. Always size UDP receive buffers to the largest datagram your protocol allows.
+
+## quiz: A TCP client calls send() twice: "HELLO" then "WORLD". What can the server's recv() return?
+tags: networking, tcp, framing
+track: core
+
+- [ ] Exactly "HELLO", then exactly "WORLD" — TCP preserves send boundaries
+- [ ] "HELLOWORLD" is possible, but a split like "HELLOWO" / "RLD" is not
+- [x] Any split of the 10 bytes: "HELLOWORLD", "HEL" then "LOWORLD", etc. — boundaries don't exist
+- [ ] It depends on TCP_NODELAY: with Nagle off, boundaries are preserved
+
+> TCP is a byte stream. `send()` boundaries are invisible to the receiver: segments can be coalesced by Nagle, split by MSS, re-chunked by retransmission. Two sends may arrive as one recv, one send as many recvs. Every TCP protocol therefore needs *framing* — length prefixes or delimiters — to rebuild messages. TCP_NODELAY changes timing, not semantics.
+
+## quiz: What is TIME_WAIT actually for?
+tags: networking, tcp
+track: core
+
+- [ ] It gives the application time to call close() on its end
+- [x] It re-ACKs a retransmitted FIN if the last ACK was lost, and lets stale segments die before the port pair is reused
+- [ ] It waits for the peer to finish reading buffered data
+- [ ] It is a Linux implementation quirk that can safely be disabled
+
+> The active closer holds the connection for 2×MSL for two correctness reasons: if its final ACK is lost the peer will retransmit FIN and something must still exist to answer it; and any delayed duplicate segments from the old connection must expire before a new connection can reuse the same 4-tuple, or they could be injected into the new stream. It's protocol correctness, not a cleanup delay.
+
+## quiz: recv() on a non-blocking socket returns -1 with errno == EWOULDBLOCK. What does that mean?
+tags: networking, nonblocking
+track: core
+
+- [ ] The connection was reset by the peer
+- [ ] The kernel receive buffer overflowed and data was lost
+- [x] Nothing to read right now — not an error; wait for readability and retry
+- [ ] The socket wasn't set to non-blocking mode correctly
+
+> `EWOULDBLOCK`/`EAGAIN` is the whole point of non-blocking mode: the call that *would have* slept returns immediately and tells you so. The correct reaction is to arm epoll/kqueue for `EPOLLIN` and retry when notified. Treating it as a fatal error (a surprisingly common bug) tears down perfectly healthy connections under light load.
+
+## quiz: An epoll edge-triggered (EPOLLET) server reads exactly 4096 bytes per wakeup, then waits again. A client sends 10000 bytes in one burst. What happens?
+tags: networking, epoll
+track: core
+
+- [ ] epoll_wait keeps firing until all 10000 bytes are read
+- [x] One wakeup, one 4096-byte read — the remaining bytes sit unread and the connection stalls until the client sends more
+- [ ] The kernel discards the unread 5904 bytes
+- [ ] EPOLLET automatically re-arms after 100ms as a fallback
+
+> Edge-triggered means "notify on the not-ready→ready *transition*". The burst caused one transition, so one notification. Data still buffered does not re-fire the event; only *new* incoming bytes would. The ET contract is to loop reading until `EAGAIN` on every wakeup. Level-triggered mode would keep reporting readiness — that's the forgiving default.
+
+## quiz: On a little-endian x86-64 host, what does htons(0x1234) return?
+tags: networking, endianness
+track: core
+
+- [ ] 0x1234 — htons is a no-op on x86
+- [x] 0x3412
+- [ ] 0x4321
+- [ ] 0x2143
+
+> Network order is big-endian; a little-endian host must swap the two bytes of a 16-bit value: 0x12,0x34 becomes 0x34,0x12 → `0x3412` when read back as a host integer. (Nibbles within a byte never move — 0x4321 and 0x2143 are the classic distractors.) On a big-endian host `htons` returns its input unchanged, which is why portable code always calls it.
+
+## quiz: Sender and receiver share this struct and use send(fd, &m, sizeof m, 0). Why is this broken as a wire protocol?
+tags: networking, serialization
+track: core
+
+```cpp
+struct Msg {
+    uint32_t seq;
+    uint16_t flags;
+    uint32_t price;
+};
+Msg m{1, 2, 3};
+send(fd, &m, sizeof m, 0);
+```
+
+- [ ] It isn't — both sides use the same struct definition, so the bytes match
+- [ ] send() cannot take a struct pointer; it only accepts char buffers
+- [x] Layout is compiler/ABI-specific: 2 padding bytes hide after `flags` (sizeof is 12, not 10), field byte order is host-endian, and packing can differ across platforms
+- [ ] It works for TCP but not UDP because datagrams strip padding
+
+> The compiler aligns `price` to 4 bytes, inserting 2 invisible padding bytes after `flags` — `sizeof(Msg)` is 12, not 10 — and the padding content is indeterminate (an info leak, too). The integers go out little-endian on x86, backwards per network convention. A peer with a different compiler, arch, or packing pragma reads garbage. Serialize field-by-field at defined offsets in network byte order, or use a schema'd format.
+
+## quiz: In listen(fd, 128), what is 128?
+tags: networking, sockets
+track: core
+
+- [ ] The maximum number of clients the server can ever serve concurrently
+- [ ] The number of worker threads the kernel spawns for accept()
+- [x] The queue limit for connections completed (or being established) but not yet accept()ed
+- [ ] The receive buffer size in KB for each accepted connection
+
+> The backlog caps the kernel's queue of connections waiting for your `accept()` call (on Linux, the fully-established queue; SYN-flood-resistant half-open handling is separate). Once you accept, a connection leaves the queue — so a server that accepts promptly can serve far more than 128 concurrent clients. If the queue is full, new arrivals are dropped or refused, which clients see as timeouts under load.
+
+## quiz: Your service must detect a dead peer within 5 seconds. Why are application-level heartbeats used instead of TCP keepalive?
+tags: networking, tcp, heartbeats
+track: core
+
+- [ ] TCP keepalive only works on Windows
+- [x] Default keepalive probes start after ~2 hours and only prove the remote TCP stack answers — a deadlocked application still ACKs; heartbeats test the application itself, on your schedule
+- [ ] Heartbeats consume less bandwidth than keepalive probes
+- [ ] TCP keepalive resets the connection's sequence numbers, corrupting data
+
+> `SO_KEEPALIVE` defaults (tcp_keepalive_time = 7200s on Linux) are uselessly slow for failover, and even tuned per-socket, probes are answered by the *kernel* — a hung process, stuck GC, or wedged event loop keeps ACKing while doing no work. An application heartbeat (ping/pong inside the protocol) proves end-to-end liveness at whatever frequency you need, which is why FIX, exchange sessions, and most RPC frameworks build one in. Keepalive still has a role: reaping connections whose peer machine vanished entirely.
+
+## challenge: Parse an IPv4 header
+tags: networking, bytes
+track: python
+lang: python
+difficulty: easy
+
+You receive raw bytes as they came off the wire: an IPv4 header (possibly with options), then payload. Write `parse_ipv4(data)` returning a dict with `'version'` (int), `'ihl'` (header length **in bytes**, i.e. the IHL field × 4), `'ttl'` (int), and `'src'`/`'dst'` as dotted-quad strings like `'192.168.0.1'`.
+
+The fixed 20-byte header layout (all multi-byte fields big-endian): byte 0 packs version in the high nibble and IHL (in 32-bit words) in the low nibble; then TOS (1B), total length (2B), identification (2B), flags+fragment offset (2B), TTL (1B), protocol (1B), header checksum (2B), source address (4B), destination address (4B).
+
+Example: `bytes.fromhex('450000541c4640003906b1e6ac100a63080808ff')` → version 4, ihl 20, ttl 57, src `'172.16.10.99'`, dst `'8.8.8.255'`.
+
+hint: One struct format string unpacks the whole fixed header: `'!BBHHHBBH4s4s'` over `data[:20]`. `!` is network (big-endian) order.
+hint: Version and IHL share a byte: `b >> 4` is the high nibble, `b & 0x0F` the low. IHL counts 32-bit words — multiply by 4 for bytes.
+hint: A `4s` field unpacks as 4 raw bytes; iterating over `bytes` yields ints, so `'.'.join(str(b) for b in src)` builds the dotted quad.
+
+```python
+# starter
+import struct
+
+def parse_ipv4(data):
+    ...
+```
+
+```python
+import struct
+
+def parse_ipv4(data):
+    vihl, tos, total_len, ident, frag, ttl, proto, csum, src, dst = \
+        struct.unpack('!BBHHHBBH4s4s', data[:20])
+    return {
+        'version': vihl >> 4,
+        'ihl': (vihl & 0x0F) * 4,
+        'ttl': ttl,
+        'src': '.'.join(str(b) for b in src),
+        'dst': '.'.join(str(b) for b in dst),
+    }
+```
+
+```python
+# harness
+#__USER__
+import struct as _struct
+
+def _mk(version, ihl_words, ttl, src, dst):
+    src_b = bytes(int(p) for p in src.split('.'))
+    dst_b = bytes(int(p) for p in dst.split('.'))
+    hdr = _struct.pack('!BBHHHBBH4s4s', (version << 4) | ihl_words,
+                       0, 20, 0x1c46, 0x4000, ttl, 6, 0xb1e6, src_b, dst_b)
+    return hdr + b'\x00' * (ihl_words * 4 - 20)
+
+def _check():
+    h = _mk(4, 5, 64, '192.168.0.1', '10.0.0.42')
+    p = parse_ipv4(h)
+    assert p['version'] == 4, p
+    assert p['ihl'] == 20, p
+    assert p['ttl'] == 64, p
+    assert p['src'] == '192.168.0.1', p
+    assert p['dst'] == '10.0.0.42', p
+    # header with options (IHL = 6 -> 24 bytes) and trailing payload
+    h2 = _mk(4, 6, 1, '10.1.2.3', '255.255.255.255') + b'payload-bytes'
+    p2 = parse_ipv4(h2)
+    assert p2['ihl'] == 24 and p2['ttl'] == 1, p2
+    assert p2['src'] == '10.1.2.3' and p2['dst'] == '255.255.255.255', p2
+    # a hand-built raw capture
+    raw = bytes.fromhex('450000541c4640003906b1e6ac100a63080808ff')
+    p3 = parse_ipv4(raw)
+    assert p3['version'] == 4 and p3['ihl'] == 20 and p3['ttl'] == 0x39, p3
+    assert p3['src'] == '172.16.10.99' and p3['dst'] == '8.8.8.255', p3
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** One `struct.unpack('!BBHHHBBH4s4s', data[:20])` call maps the whole fixed header; the format string *is* the protocol spec, field for field. The only bit-fiddling is splitting the shared version/IHL byte with a shift and a mask, and remembering IHL is in 32-bit words (so ×4 for bytes — headers with options are longer than 20). Addresses come out as `4s` raw bytes and become dotted quads by joining the byte values. Real parsers do exactly this, plus validating version, checksum, and `ihl >= 20`.
+
+## challenge: Internet checksum (RFC 1071)
+tags: networking, bytes
+track: python
+lang: python
+difficulty: medium
+
+Implement the checksum used by IPv4, ICMP, UDP and TCP. Write `inet_checksum(data)` → int in [0, 0xFFFF]: treat `data` as a sequence of 16-bit **big-endian** words (if the length is odd, pad the final byte with a zero on the right), add them all up, fold any carry above bit 15 back into the low 16 bits until none remains, and return the one's complement of the result, masked to 16 bits.
+
+The neat property: a receiver that runs the same sum over a header *whose checksum field is filled in* gets 0 for an intact packet — that's how verification works in practice.
+
+Example: for the 20-byte IPv4 header `4500 0073 0000 4000 4011 0000 c0a8 0001 c0a8 00c7` (checksum field zeroed), the checksum is `0xB861`.
+
+hint: Walk the bytes two at a time: `word = (data[i] << 8) | data[i+1]`. Append a single zero byte first when `len(data)` is odd.
+hint: Python ints don't overflow, so the carries pile up above bit 15. Fold with `total = (total & 0xFFFF) + (total >> 16)` in a loop — one fold can produce a new carry.
+hint: Python's `~total` is negative (infinite-precision two's complement); `~total & 0xFFFF` gives the 16-bit one's complement you want.
+
+```python
+# starter
+def inet_checksum(data):
+    ...
+```
+
+```python
+def inet_checksum(data):
+    if len(data) % 2:
+        data += b'\x00'
+    total = 0
+    for i in range(0, len(data), 2):
+        total += (data[i] << 8) | data[i + 1]
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return ~total & 0xFFFF
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    # classic IPv4 header example: checksum field (zeroed here) must come out 0xB861
+    hdr = bytes.fromhex('45000073000040004011' + '0000' + 'c0a80001c0a800c7')
+    assert inet_checksum(hdr) == 0xB861, hex(inet_checksum(hdr))
+    # verifying a received header: sum over the full header (checksum in place) gives 0
+    full = bytes.fromhex('45000073000040004011' + 'b861' + 'c0a80001c0a800c7')
+    assert inet_checksum(full) == 0, hex(inet_checksum(full))
+    assert inet_checksum(b'') == 0xFFFF
+    assert inet_checksum(b'\x00\x00') == 0xFFFF
+    assert inet_checksum(b'\xff\xff') == 0
+    # odd length: trailing byte is padded with a zero on the right
+    assert inet_checksum(b'\x01\x02\x03') == inet_checksum(b'\x01\x02\x03\x00')
+    # carry folding actually happens
+    assert inet_checksum(b'\xff\xff\xff\xff\x00\x01') == 0xFFFE, hex(inet_checksum(b'\xff\xff\xff\xff\x00\x01'))
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** The algorithm is "one's complement sum of 16-bit words, then complement". The two details that fail interviews: **carry folding** — in one's complement arithmetic a carry out of bit 15 wraps around and is added back in (`(total & 0xFFFF) + (total >> 16)`, looped, since a fold can itself carry) — and the **odd trailing byte**, which RFC 1071 pads on the right, making it the *high* byte of the last word. The complement step is why verification sums to zero: `sum + ~sum == 0xFFFF ≡ -0` in one's complement. Production stacks vectorize this (sum 32/64 bits at a time, fold once at the end), which works precisely because one's complement addition is associative and endian-agnostic.
+
+## challenge: Length-prefixed message framing
+tags: networking, bytes
+track: python
+lang: python
+difficulty: medium
+
+TCP is a byte stream — your message boundaries do not survive the trip, and `recv()` hands you arbitrary chunks: half a message, three and a bit, one byte. The universal fix is a length prefix. Implement both directions:
+
+- `frame(payload)` → `bytes`: a 4-byte big-endian unsigned length, then the payload.
+- `class Deframer` with `feed(chunk) -> list[bytes]`: called with each received chunk in order; returns *all complete messages* newly available (possibly `[]`), in order, buffering any partial data internally until later chunks complete it.
+
+Empty payloads are legal (`frame(b'')` is 4 zero bytes → message `b''`). A chunk boundary can fall anywhere — including in the middle of the 4-byte prefix.
+
+hint: Keep one internal `bytes` buffer. On feed: append the chunk, then repeatedly peel messages off the front while enough bytes are buffered.
+hint: You can only read the length once 4 bytes are buffered: `struct.unpack('!I', buf[:4])`. Then you need `4 + n` total before the message is complete — otherwise stop and wait for more.
+hint: Extract with slicing — `buf[4:4+n]` is the message, `buf[4+n:]` is the remainder. Loop, because one chunk may complete several messages.
+
+```python
+# starter
+import struct
+
+def frame(payload):
+    ...
+
+class Deframer:
+    def __init__(self):
+        ...
+
+    def feed(self, chunk):
+        ...
+```
+
+```python
+import struct
+
+def frame(payload):
+    return struct.pack('!I', len(payload)) + payload
+
+class Deframer:
+    def __init__(self):
+        self._buf = b''
+
+    def feed(self, chunk):
+        self._buf += chunk
+        msgs = []
+        while len(self._buf) >= 4:
+            (n,) = struct.unpack('!I', self._buf[:4])
+            if len(self._buf) < 4 + n:
+                break
+            msgs.append(self._buf[4:4 + n])
+            self._buf = self._buf[4 + n:]
+        return msgs
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert frame(b'hi') == b'\x00\x00\x00\x02hi'
+    assert frame(b'') == b'\x00\x00\x00\x00'
+    stream = frame(b'hello') + frame(b'') + frame(b'world!')
+    # one giant chunk -> all three at once
+    assert Deframer().feed(stream) == [b'hello', b'', b'world!']
+    # dripped one byte at a time -> same messages, in order
+    d = Deframer()
+    got = []
+    for i in range(len(stream)):
+        got += d.feed(stream[i:i + 1])
+    assert got == [b'hello', b'', b'world!'], got
+    # split in the middle of the length prefix
+    d2 = Deframer()
+    assert d2.feed(stream[:2]) == []
+    assert d2.feed(stream[2:11]) == [b'hello']
+    assert d2.feed(stream[11:]) == [b'', b'world!']
+    # leftover partial stays buffered until completed
+    d3 = Deframer()
+    assert d3.feed(frame(b'abc')[:5]) == []
+    assert d3.feed(frame(b'abc')[5:] + frame(b'x')) == [b'abc', b'x']
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** The deframer is a tiny state machine flattened into one invariant: *buffer everything, then peel complete frames off the front*. The `while` loop matters — one chunk can complete zero, one, or many messages — and both exit conditions matter: fewer than 4 bytes (can't even read the length) or fewer than `4 + n` (message still in flight). This accumulate-and-peel pattern is inside every protocol implementation that sits on TCP: HTTP/2 frames, Kafka, Redis, gRPC, database drivers. A production version would cap `n` (a hostile 4 GB prefix is a memory-exhaustion attack) and use a deque or index rather than re-slicing the buffer, but the logic is exactly this.
+
+## challenge: Varint encode/decode (protobuf-style)
+tags: networking, bytes
+track: python
+lang: python
+difficulty: hard
+
+Protocol Buffers (and WebAssembly, and many storage formats) encode unsigned integers as **base-128 varints**: 7 bits of payload per byte, least-significant group first, with the high bit of each byte as a continuation flag — 1 means "more bytes follow", 0 means "this is the last one". Small numbers cost one byte; 64-bit giants cost ten.
+
+Implement:
+- `varint_encode(n)` → `bytes` for a non-negative int (arbitrary size).
+- `varint_decode(data, offset=0)` → `(value, new_offset)`: decode one varint starting at `offset`, returning the value and the offset just past it — so consecutive varints in one buffer decode by threading the offset.
+
+Worked example: 300 is `0b100101100` → groups of 7 from the low end: `0101100`, `0000010` → emit low group first with continuation bit: `0xAC 0x02`.
+
+hint: Encode loop: take `n & 0x7F`, shift `n >>= 7`; if anything remains, emit the group with `| 0x80` and continue, else emit it bare and stop. Zero must still emit one byte, b'\x00'.
+hint: Decode loop: for each byte, OR `(b & 0x7F) << shift` into the result with shift going 0, 7, 14, ...; a clear high bit ends the varint.
+hint: Little-endian group order means the FIRST byte holds the LOWEST 7 bits — the decoder's shift grows as bytes arrive; the encoder never needs to know the length in advance.
+
+```python
+# starter
+def varint_encode(n):
+    ...
+
+def varint_decode(data, offset=0):
+    ...
+```
+
+```python
+def varint_encode(n):
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        if n:
+            out.append(b | 0x80)
+        else:
+            out.append(b)
+            return bytes(out)
+
+def varint_decode(data, offset=0):
+    result = 0
+    shift = 0
+    while True:
+        b = data[offset]
+        offset += 1
+        result |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return result, offset
+        shift += 7
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert varint_encode(0) == b'\x00'
+    assert varint_encode(1) == b'\x01'
+    assert varint_encode(127) == b'\x7f'
+    assert varint_encode(128) == b'\x80\x01'
+    assert varint_encode(300) == b'\xac\x02'          # the protobuf docs example
+    assert varint_encode(16384) == b'\x80\x80\x01'
+    assert varint_decode(b'\xac\x02') == (300, 2)
+    assert varint_decode(b'\xff\xff\xff\xff\x0f') == (2**32 - 1, 5)
+    # offset threading: decode consecutive varints out of one buffer
+    buf = varint_encode(5) + varint_encode(1000) + varint_encode(0)
+    v1, off = varint_decode(buf)
+    v2, off = varint_decode(buf, off)
+    v3, off = varint_decode(buf, off)
+    assert (v1, v2, v3) == (5, 1000, 0) and off == len(buf)
+    # round-trip a spread of values, including group boundaries
+    for n in [0, 1, 127, 128, 255, 300, 2**14 - 1, 2**14, 2**21, 2**35 + 7, 2**63]:
+        enc = varint_encode(n)
+        assert varint_decode(enc) == (n, len(enc)), n
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Each byte carries a 7-bit group plus a continuation flag, lowest group first. The encoder peels 7 bits at a time until nothing remains (with the "emit at least one byte" edge case for 0); the decoder rebuilds by shifting each group into place — `result |= (b & 0x7F) << shift` with shift stepping by 7 — until it sees a clear high bit. The boundary values are where bugs live: 127 (one byte, `0x7F`) vs 128 (first two-byte value, `0x80 0x01`), and every power of `2**7k`. Returning `(value, new_offset)` instead of consuming a stream is the standard zero-copy decoding shape — protobuf fields are `(tag varint, value)` pairs threaded through a buffer exactly like this. Signed integers add ZigZag on top (`(n << 1) ^ (n >> 63)`) so small negatives stay small; a hardened decoder also caps the byte count (10 for 64-bit) to reject malicious inputs.
+
+## fact: The socket module is the C API with a Python accent
+tags: networking, sockets
+track: python
+
+`import socket` exposes Berkeley sockets almost 1:1: `socket.socket(socket.AF_INET, socket.SOCK_STREAM)` is a TCP/IPv4 endpoint, `SOCK_DGRAM` is UDP, `AF_INET6` is IPv6. The C dance — bind/listen/accept for servers, connect for clients — is the same, just with tuples `(host, port)` instead of `sockaddr` structs, and exceptions (`OSError`, `ConnectionRefusedError`) instead of -1/errno.
+
+```python
+import socket
+
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(("0.0.0.0", 8080))
+srv.listen(128)
+conn, peer = srv.accept()      # NEW socket per client + peer address tuple
+data = conn.recv(4096)         # bytes, up to 4096 — maybe fewer
+```
+
+Knowing this layer pays off even if you live in asyncio or requests: every abstraction above it leaks its semantics — partial reads, byte streams, connection resets.
+
+## fact: Context-managed sockets, and sendall vs send
+tags: networking, sockets
+track: python
+
+Sockets are resources — use `with` so they close on every exit path, exceptions included (Python's RAII). And learn the one trap that bites everyone: `send()` is **not obligated to send everything**. It returns the number of bytes actually queued, which can be less than you gave it, and it's on you to loop. `sendall()` is that loop, provided by the library — it either sends the whole buffer or raises.
+
+```python
+import socket
+
+with socket.create_connection(("example.com", 80), timeout=5) as s:
+    n = s.send(payload)        # may send only a prefix! returns count
+    s.sendall(payload)         # sends everything or raises — use this
+```
+
+`socket.create_connection()` is the friendly client constructor: resolves the host, tries each address, applies the timeout. Symmetrically on the read side, `recv(n)` returns *up to* n bytes — an empty `b""` means the peer closed. Any "read exactly k bytes" logic must loop.
+
+## fact: struct.pack and unpack are your binary protocol toolkit
+tags: networking, bytes, struct
+track: python
+
+Binary protocols define fields at byte offsets in a fixed byte order. The `struct` module converts between those bytes and Python values using format strings: `!` means network order (big-endian) — start every wire format with it; `B`/`H`/`I`/`Q` are unsigned 8/16/32/64-bit ints; `s` with a count is fixed-length raw bytes.
+
+```python
+import struct
+
+struct.pack('!H', 80)                    # b'\x00\x50'   — port as 16-bit BE
+struct.pack('!IH', 1, 2)                 # b'\x00\x00\x00\x01\x00\x02'
+struct.unpack('!IH', b'\x00\x00\x00\x01\x00\x02')  # (1, 2)
+struct.calcsize('!IHB')                  # 7 — no padding with ! (unlike native '@')
+```
+
+Two habits: always write the endianness prefix (native mode `@` inserts C-style padding and host byte order — exactly what you don't want on the wire), and use `struct.calcsize(fmt)` instead of hand-counting header sizes. `unpack` demands an exactly-sized buffer; use `unpack_from(fmt, buf, offset)` to walk through a larger one.
+
+## fact: async/await — cooperative multitasking on one thread
+tags: networking, asyncio
+track: python
+
+The asyncio mental model: **one thread, one event loop, many paused functions.** A coroutine (`async def`) runs until it hits an `await` on something not ready — then it *suspends*, handing control back to the event loop, which runs whichever other coroutine's I/O just completed. Nothing runs in parallel; things *interleave* at await points.
+
+Two consequences follow. First, `await` marks every place your function can be paused — between awaits you cannot be preempted (no locks needed for plain data). Second, any **blocking** call — `time.sleep`, `requests.get`, a blocking `sock.recv` — freezes the *entire loop*: no other coroutine runs until it returns. That's the cardinal sin. Use the async equivalents (`asyncio.sleep`, async clients) or push blocking work to a thread with `await asyncio.to_thread(fn)`.
+
+```python
+import asyncio
+
+async def fetch(host):
+    await asyncio.sleep(0.1)          # suspends HERE; loop runs others
+    return host
+
+async def main():
+    # gather runs them concurrently; results come back in argument order
+    results = await asyncio.gather(fetch("a"), fetch("b"), fetch("c"))
+
+asyncio.run(main())                    # creates the loop, runs main, closes it
+```
+
+## fact: asyncio streams — sockets with await
+tags: networking, asyncio
+track: python
+
+`asyncio.open_connection()` and `asyncio.start_server()` are the high-level async socket API. They hand you a `StreamReader`/`StreamWriter` pair wrapping a non-blocking socket registered with the loop: `await reader.read(n)` suspends instead of blocking; `readexactly(n)` and `readline()` do the accumulate-a-full-message loop for you (a length-prefixed protocol is `readexactly(4)` then `readexactly(length)`).
+
+```python
+import asyncio
+
+async def handle(reader, writer):          # one running instance per client
+    data = await reader.readline()
+    writer.write(data.upper())             # buffers, doesn't send by itself
+    await writer.drain()                   # backpressure: wait for the buffer to flush
+    writer.close()
+    await writer.wait_closed()
+
+async def main():
+    server = await asyncio.start_server(handle, "127.0.0.1", 8888)
+    async with server:
+        await server.serve_forever()
+```
+
+Note the split: `write()` is synchronous buffering, `await drain()` applies backpressure when the peer reads slowly. Ten thousand concurrent clients are ten thousand paused `handle` coroutines — no threads, one loop.
+
+## fact: HTTP clients — urllib, http.client, and the requests shape
+tags: networking, http
+track: python
+
+Under every HTTP library is the same socket work: connect (TLS handshake for https), send `METHOD path HTTP/1.1` plus headers, parse the status line and headers back, read the body per `Content-Length` or chunked encoding, maybe keep the connection alive for reuse.
+
+The stdlib gives you two layers: `http.client` is that protocol made explicit (`HTTPSConnection`, `request()`, `getresponse()`); `urllib.request.urlopen()` adds URL parsing and redirect handling. The third-party `requests` (and its async sibling `httpx`) defines the API shape everyone copies:
+
+```python
+import urllib.request, json
+
+with urllib.request.urlopen("https://api.example.com/data", timeout=10) as r:
+    payload = json.loads(r.read().decode("utf-8"))
+
+# the requests-shaped equivalent every library imitates:
+# r = requests.get(url, timeout=10); r.raise_for_status(); payload = r.json()
+```
+
+The concepts that transfer across all of them: **sessions/connection pooling** (reusing TCP+TLS connections dwarfs any other client-side optimization), **always set a timeout** (the default is often "forever"), and status handling is on you (`urlopen` raises on 4xx/5xx; `requests` doesn't until `raise_for_status()`).
+
+## fact: The GIL doesn't matter for IO-bound work
+tags: networking, concurrency, gil
+track: python
+
+The GIL lets only one thread execute Python bytecode at a time — so threads don't speed up CPU-bound pure-Python code. But every blocking I/O call in CPython (`sock.recv`, `sock.send`, file reads, `time.sleep`) **releases the GIL** while waiting in the kernel. Fifty threads waiting on fifty sockets are all genuinely waiting in parallel; the GIL only serializes the Python-level processing between waits, and IO-bound work is mostly waits.
+
+So for network concurrency you have two honest options: **threads** (simple, pre-emptive, fine up to hundreds of connections, each costing a stack and scheduler overhead) and **asyncio** (single-threaded cooperative, cheap enough for tens of thousands of connections, but one blocking call stalls everything). Both are legitimate; neither is throttled by the GIL for I/O.
+
+CPU-bound work is different: use `multiprocessing`/`ProcessPoolExecutor` (separate interpreters, separate GILs) or a C extension that releases the GIL (numpy). Interview one-liner: *GIL blocks parallel Python execution, not parallel waiting.*
+
+## fact: selectors — the epoll abstraction under asyncio
+tags: networking, multiplexing
+track: python
+
+The `selectors` module is Python's portable readiness API: `DefaultSelector` picks the best mechanism for the platform — epoll on Linux, kqueue on macOS/BSD, and select as the fallback — behind one interface. `register(fd, events, data)` declares interest; `select(timeout)` returns the fds that are ready right now. This is exactly the layer asyncio's default event loop is built on, so writing one loop by hand demystifies asyncio permanently.
+
+```python
+import selectors, socket
+
+sel = selectors.DefaultSelector()
+srv = socket.socket(); srv.bind(("0.0.0.0", 8080)); srv.listen()
+srv.setblocking(False)
+sel.register(srv, selectors.EVENT_READ, data="accept")
+
+while True:
+    for key, events in sel.select(timeout=1.0):
+        if key.data == "accept":
+            conn, _ = key.fileobj.accept()
+            conn.setblocking(False)
+            sel.register(conn, selectors.EVENT_READ, data="client")
+        else:
+            data = key.fileobj.recv(4096)
+            if not data:                       # peer closed
+                sel.unregister(key.fileobj); key.fileobj.close()
+```
+
+The pattern — non-blocking fds, a registry of interests, a dispatch loop over ready events — *is* the event loop. asyncio adds coroutines, callbacks, and scheduling sugar on top of exactly this.
+
+## quiz: sock.send(payload) returned 5, but len(payload) is 100. What happened?
+tags: networking, sockets
+track: python
+
+- [ ] Impossible — send() always transmits the whole buffer or raises
+- [x] Only the first 5 bytes were queued; sending the remaining 95 is your job (or use sendall)
+- [ ] The other 95 bytes were sent out-of-band and will arrive separately
+- [ ] The connection dropped after 5 bytes; the socket is now closed
+
+> `send()` queues as much as fits in the kernel send buffer and returns the count — a short send is normal under backpressure. Code that ignores the return value silently truncates messages. `sendall()` is the retry loop done for you: it returns only when everything is queued, or raises. This mirrors C's `send()`; the trap survives translation.
+
+## quiz: What does struct.pack('>H', 258) produce?
+tags: networking, bytes, struct
+track: python
+
+- [ ] b'\x02\x01'
+- [x] b'\x01\x02'
+- [ ] b'\x00\x02\x00\x01'
+- [ ] b'258'
+
+> `>H` is a big-endian unsigned 16-bit integer. 258 = 0x0102, and big-endian writes the most significant byte first: `b'\x01\x02'`. Little-endian (`<H`) would give `b'\x02\x01'`. Two bytes, not four (`H` is 16-bit; `I` is 32), and never ASCII digits — `struct` is binary, not `str(258)`.
+
+## quiz: You call sock.recv(4096) on a TCP socket. The peer sent 10 bytes. What does recv return?
+tags: networking, sockets
+track: python
+
+- [ ] It blocks until 4096 bytes have accumulated
+- [ ] Exactly 4096 bytes, zero-padded after the first 10
+- [x] Up to 4096 bytes — here the 10 available; b'' would mean the peer closed
+- [ ] It raises BufferError because the peer sent less than requested
+
+> The argument to `recv` is a *maximum*, not a contract: it returns whatever is in the receive buffer right now, at most 4096 bytes. Ten bytes available → ten bytes returned. The special case is `b''` (empty bytes), which means the peer closed the connection cleanly. Any "read exactly k bytes" protocol logic must loop and accumulate — or use asyncio's `readexactly`.
+
+## quiz: Inside a coroutine, execution hits `await something_not_ready`. Who gets control?
+tags: networking, asyncio
+track: python
+
+- [ ] The operating system scheduler, which parks the thread
+- [ ] The next line of the same coroutine, which runs speculatively
+- [x] The event loop, which resumes other coroutines until this one's result is ready
+- [ ] A worker thread from asyncio's internal thread pool that completes the await
+
+> `await` on a pending awaitable suspends the coroutine and yields control back to the event loop — the same single thread then runs whatever other coroutine is ready. Nothing is preempted and no thread pool is involved (unless you explicitly use `asyncio.to_thread`). That's the whole model: cooperative multitasking with suspension points spelled `await`.
+
+## quiz: What does `results = await asyncio.gather(fetch(a), fetch(b), fetch(c))` do?
+tags: networking, asyncio
+track: python
+
+- [ ] Runs the three coroutines strictly one after another, left to right
+- [ ] Returns results in completion order, fastest first
+- [x] Runs all three concurrently and returns their results in argument order
+- [ ] Returns the result of whichever finishes first and cancels the rest
+
+> `gather` schedules all awaitables concurrently on the loop and completes when all are done, with results positionally matching the arguments — completion order is irrelevant to the result list. "Fastest first" describes `asyncio.as_completed`; "first one wins" is `asyncio.wait(..., return_when=FIRST_COMPLETED)`. By default one exception propagates and cancels nothing else unless you handle it (`return_exceptions=True` collects errors as values).
+
+## quiz: What's the difference between sock.close() and sock.shutdown(socket.SHUT_WR)?
+tags: networking, sockets
+track: python
+
+- [ ] None — shutdown is an alias kept for C compatibility
+- [x] shutdown(SHUT_WR) sends FIN — "no more data from me" — while you can still recv; close() just releases this handle's reference to the socket
+- [ ] close() sends FIN immediately; shutdown only clears Python's buffers
+- [ ] shutdown works only on listening sockets, close only on connections
+
+> `shutdown(SHUT_WR)` performs a half-close: your FIN goes out, the peer's `recv` returns `b''`, yet you can keep reading their remaining data — exactly what a client that has finished sending a request wants. `close()` only drops this file object's reference; the underlying connection tears down when the last reference (think `dup`'d fds, forked children) disappears. The classic use: shutdown write, drain the response, then close.
+
+## quiz: Inside an asyncio server you call a plain blocking srv_sock.accept(). Why is this a disaster?
+tags: networking, asyncio
+track: python
+
+- [ ] accept() is thread-unsafe and corrupts the event loop's internal state
+- [ ] Blocking calls raise RuntimeError when a loop is running in the thread
+- [x] The whole event loop freezes: every other coroutine — heartbeats, timeouts, existing clients — stops until a new client happens to connect
+- [ ] Nothing serious: asyncio detects the block and moves other tasks to a thread
+
+> The loop is one thread running one thing at a time; coroutines only interleave at `await` points. A blocking `accept()` occupies that thread indefinitely, so *all* concurrent work stalls — connected clients time out because their coroutines never get scheduled. asyncio does not detect or offload this (it can only *warn* in debug mode). Use `await loop.sock_accept(sock)`, `asyncio.start_server`, or push truly blocking work through `asyncio.to_thread`.
+
+## quiz: What does sock.send("hello") do on a connected TCP socket?
+tags: networking, bytes
+track: python
+
+- [ ] Sends the 5 ASCII bytes — Python encodes str automatically
+- [ ] Sends it UTF-8 encoded with a BOM prefix
+- [x] Raises TypeError: a bytes-like object is required, not 'str'
+- [ ] Works in Python 2 and 3 identically
+
+> The wire carries bytes; Python 3's `str` is a sequence of Unicode code points with no defined byte representation until *you* pick an encoding. So sockets accept only bytes-like objects and `send("hello")` raises `TypeError: a bytes-like object is required, not 'str'`. Encode explicitly at the boundary — `sock.sendall("hello".encode("utf-8"))` — and `.decode()` on the way in. (Python 2's blurring of str/bytes is precisely the bug class Python 3 eliminated.)
+
 ## challenge: Two Sum
 tags: array, hash-table
 track: python
@@ -37455,3 +42018,1123 @@ for (unsigned i = v.size() - 1; i >= 0; --i)
 **Analysis:** `i` is unsigned, so `i >= 0` is always true — after `i` hits 0, `--i` wraps to `4294967295` and `v[i]` is out-of-bounds UB. Also `v.size() - 1` on an *empty* vector wraps the same way before the loop even starts.
 
 Fixes, best first: iterate forward with a range-for over `std::views::reverse(v)` (C++20); classic index loop with `for (auto i = v.size(); i-- > 0;)` (the "goes-to operator" `i --> 0`); or use a signed `int`/`ptrdiff_t` index. Signed/unsigned wraparound is the most reposted C++ gotcha on LinkedIn for a reason.
+
+## fact: CMake doesn't build your code — it generates the thing that does
+tags: toolchain, cmake, basics
+track: core
+
+CMake is a **build system generator**. You describe your project once in `CMakeLists.txt`; CMake **configures** (reads the description, finds compilers and dependencies, probes the platform) and **generates** native build files — Ninja files, Makefiles, a Visual Studio solution, an Xcode project. The actual compiling is done by that generated build system. This is why CMake won: one description, every platform and IDE.
+
+The three-step flow is worth internalizing because errors live in different steps: a typo'd variable fails at *configure*, a missing source file at *generate/build* start, a compiler error at *build*. `-S` names the source dir, `-B` the build dir; `cmake --build` invokes the underlying tool so you don't have to remember whether it's ninja or make.
+
+```cmake
+# CMakeLists.txt — the description
+cmake_minimum_required(VERSION 3.20)
+project(dojo CXX)
+add_executable(app main.cpp)
+```
+```bash
+cmake -S . -B build -G Ninja   # configure + generate
+cmake --build build            # delegate to ninja
+```
+
+## fact: In modern CMake, the target is the unit — not the variable
+tags: toolchain, cmake, targets
+track: core
+
+Everything in modern CMake hangs off **targets**: `add_executable()` creates a program, `add_library()` a library (`STATIC` archive, `SHARED` .so/.dll, or `INTERFACE` for header-only — a target with no compiled output at all). Each target carries its own properties: sources, include paths, compile options, definitions, linked dependencies. You then configure targets with the `target_*` command family.
+
+The legacy style — mutating global state like `include_directories()` and `CMAKE_CXX_FLAGS`, which leak into every target defined afterwards — is the main source of unmaintainable CMake. The modern rule: if a command doesn't start with `target_` (or set a property on a specific target), be suspicious. Targets compose like objects; globals compose like goto.
+
+```cmake
+add_library(core STATIC engine.cpp orders.cpp)
+add_library(mathlib INTERFACE)              # header-only
+add_executable(app main.cpp)
+
+target_compile_features(core PUBLIC cxx_std_20)  # per-target, not global
+```
+
+## fact: PRIVATE, PUBLIC, INTERFACE — the one mental model CMake runs on
+tags: toolchain, cmake, propagation
+track: core
+
+`target_link_libraries(A <scope> B)` does two jobs: it links B into A, and it decides what A's *own consumers* inherit. The scopes answer one question — **who needs B?** `PRIVATE`: only A's implementation uses B (B is in A's .cpp files, invisible in A's headers) — consumers of A get nothing. `PUBLIC`: B appears in A's public headers, so anyone compiling against A also needs B's headers and link line — consumers inherit it. `INTERFACE`: only consumers need it, not A itself (rare for linking; the norm for header-only libs).
+
+Getting this right is what makes a dependency graph self-assembling: link the top-level target and every transitive requirement — include dirs, definitions, link libraries — flows in automatically. Getting it wrong shows up as the classic bug: `app` fails to find `json.hpp` because `core` linked the JSON lib `PRIVATE` while exposing it in `core.h`. Rule of thumb: mentioned in your headers → `PUBLIC`; implementation detail → `PRIVATE`.
+
+```cmake
+target_link_libraries(core
+    PUBLIC  fmt::fmt         # fmt types appear in core's headers
+    PRIVATE OpenSSL::Crypto) # used only inside core's .cpp files
+
+target_link_libraries(app PRIVATE core)
+# app automatically gets fmt's includes + link line; never sees OpenSSL
+```
+
+## fact: Usage requirements — a target ships its own build instructions
+tags: toolchain, cmake, usage-requirements
+track: core
+
+`target_include_directories`, `target_compile_definitions`, and `target_compile_options` take the same PRIVATE/PUBLIC/INTERFACE scopes, and together they form a target's **usage requirements**: everything a consumer must do to compile against it. A well-written library target is self-describing — consumers just link it and inherit the right `-I`, `-D`, and flags. Nobody downstream hand-maintains include paths.
+
+The canonical pattern: a library's public headers live under `include/`, its internals under `src/`. Consumers need `include/` (→ `PUBLIC`); only the library's own .cpp files see `src/` (→ `PRIVATE`). For header-only libraries everything is `INTERFACE` — the target compiles nothing but still carries requirements.
+
+```cmake
+add_library(core STATIC src/engine.cpp)
+target_include_directories(core
+    PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include   # consumers get -Iinclude
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)      # internals stay internal
+target_compile_definitions(core PUBLIC CORE_VERSION=2)
+
+add_library(mathlib INTERFACE)
+target_include_directories(mathlib INTERFACE include/)
+```
+
+## fact: find_package hands you imported targets — use those, not variables
+tags: toolchain, cmake, find-package
+track: core
+
+`find_package(fmt REQUIRED)` locates a dependency that's already installed on the system. It works in two modes: **Config mode** — the package installed its own `fmtConfig.cmake` describing itself (the modern norm); **Module mode** — CMake or your project supplies a `FindXxx.cmake` that goes hunting (how legacy libs like `FindZLIB` work). `REQUIRED` makes configure fail fast instead of exploding later at link.
+
+What a good find gives you is an **imported target** like `fmt::fmt` — a first-class target carrying the library's full usage requirements: headers, link line, transitive deps, per-config Debug/Release variants. Link it and everything propagates, exactly like your own targets. The old style — pasting `${FMT_INCLUDE_DIRS}` and `${FMT_LIBRARIES}` variables around — loses all of that and is the second great source of broken CMake. The `::` in a name is your quality signal: it's a target, and a typo becomes a configure-time error instead of a weird link failure.
+
+```cmake
+find_package(fmt REQUIRED)              # Config mode: finds fmtConfig.cmake
+find_package(Threads REQUIRED)          # Module mode: FindThreads.cmake
+
+target_link_libraries(app PRIVATE fmt::fmt Threads::Threads)
+# imported targets propagate includes/flags; no *_INCLUDE_DIRS variables
+```
+
+## fact: FetchContent builds your dependencies from source, inside your build
+tags: toolchain, cmake, fetchcontent
+track: core
+
+`find_package` assumes the dependency is already installed — someone provisioned the machine. **FetchContent** removes that assumption: at configure time it downloads the dependency's source (typically a git tag) and folds it into your build via `add_subdirectory`, so its targets — the same `fmt::fmt` — become available as if you'd written them. Clean clone → `cmake -S . -B build` → everything just builds. No system state, exact pinned versions, dependencies compiled with *your* flags and sanitizers.
+
+Tradeoffs: you compile dependencies yourself (first build is slower — GoogleTest is fine, Qt is not), and the dep's CMake must be well-behaved as a subproject. Common hybrid: `find_package` for heavyweight system libs, FetchContent for small pinned ones — or `FetchContent_Declare(... FIND_PACKAGE_ARGS)` to try the installed copy first and fall back to source. Always pin an exact tag or commit hash: floating branches are how builds stop being reproducible.
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(fmt
+    GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+    GIT_TAG        10.2.1)               # pin exactly — never a branch
+FetchContent_MakeAvailable(fmt)
+
+target_link_libraries(app PRIVATE fmt::fmt)   # same target as find_package
+```
+
+## fact: Generator expressions answer questions CMake can't answer yet
+tags: toolchain, cmake, generator-expressions
+track: core
+
+`if()` runs at configure time — but some facts aren't settled then. With multi-config generators (Visual Studio, Xcode), one configure serves Debug *and* Release; the config is chosen at build time. **Generator expressions** — `$<...>` — are placeholders evaluated during the generate step, per configuration: `$<CONFIG:Debug>` is `1` in Debug builds and `0` otherwise, and the conditional form `$<condition:payload>` expands the payload only when the condition holds.
+
+This is the correct tool for per-config flags and definitions — `if(CMAKE_BUILD_TYPE STREQUAL "Debug")` is the bug, because `CMAKE_BUILD_TYPE` is empty or meaningless under multi-config generators. Genexes also handle per-compiler flags (`$<CXX_COMPILER_ID:MSVC>`) and the build-vs-install include-path split. They compose like nested function calls and turn unreadable fast — keep them short, or bind them to a name with a variable.
+
+```cmake
+target_compile_definitions(core PRIVATE
+    $<$<CONFIG:Debug>:DOJO_TRACE_LOGGING>)     # Debug builds only
+
+target_compile_options(core PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)
+```
+
+## fact: Out-of-source builds, CMAKE_BUILD_TYPE, and the two files tooling needs
+tags: toolchain, cmake, workflow
+track: core
+
+Always build **out of source**: all generated state goes in `build/`, your tree stays clean, and you can keep several configurations side by side (`build-debug/`, `build-asan/`) — deleting one is a true clean build. For single-config generators, `CMAKE_BUILD_TYPE` selects the flag set: `Debug` (`-g`, no optimization), `Release` (`-O3 -DNDEBUG`), `RelWithDebInfo` (`-O2 -g -DNDEBUG` — the production-debugging sweet spot). Trap: unset means *no optimization flags at all*; benchmarking such a build is meaningless. Set it explicitly.
+
+Two JSON files tame the workflow. `CMAKE_EXPORT_COMPILE_COMMANDS=ON` writes **compile_commands.json** — the exact compile command per file — which is how clangd, clang-tidy, and IDEs understand your code; symlink it to the repo root. **CMakePresets.json** (committed) names your configurations so "the asan build" is one flag for every developer and CI, instead of a wiki page of incantations.
+
+```cmake
+# CMakePresets.json (excerpt)
+{ "name": "release", "binaryDir": "build-release",
+  "generator": "Ninja",
+  "cacheVariables": { "CMAKE_BUILD_TYPE": "Release",
+                      "CMAKE_EXPORT_COMPILE_COMMANDS": "ON" } }
+```
+```bash
+cmake --preset release && cmake --build build-release
+```
+
+## fact: Four stages stand between your .cpp and a running binary
+tags: toolchain, compiler, pipeline
+track: core
+
+`g++ main.cpp` looks like one step but runs four: **preprocess** (expand `#include` and macros — pure text), **compile** (C++ → assembly), **assemble** (assembly → object file), **link** (combine object files and libraries into an executable). Each stage has its own failure mode: a missing header dies in the preprocessor, a syntax error in the compiler, an unresolved symbol only at link time.
+
+You can stop the driver at any stage — this is the fastest way to build a mental model of what each one produces.
+
+```bash
+g++ -E main.cpp -o main.ii   # preprocess only: one giant translation unit
+g++ -S main.ii  -o main.s    # compile only: human-readable assembly
+g++ -c main.s   -o main.o    # assemble only: relocatable object file
+g++ main.o      -o main      # link: resolve symbols, produce executable
+```
+
+## fact: The preprocessor is a text machine that has never heard of C++
+tags: toolchain, compiler, preprocessor
+track: core
+
+Before compilation proper, the preprocessor runs a purely textual pass: `#include "x.h"` is literally replaced by the file's contents (recursively — a hello-world TU can balloon to tens of thousands of lines), and `#define` macros are token substitutions with no knowledge of types or scopes. That ignorance is why function-like macros need parenthesized arguments: `SQUARE(a+b)` expands to whatever text you wrote.
+
+Because inclusion is textual, a header pulled in twice would define its contents twice. Include guards (`#ifndef FOO_H / #define FOO_H / #endif`) make the second inclusion expand to nothing. `#pragma once` does the same job keyed on file identity — less typing, no name-collision risk, supported by every major compiler, but technically non-standard. Both only guard *within one translation unit*; they do nothing about the same symbol defined in different .cpp files.
+
+```cpp
+// widget.h
+#pragma once            // or the classic guard:
+#ifndef WIDGET_H
+#define WIDGET_H
+struct Widget { int id; };
+#endif
+```
+
+## fact: Lexing and parsing turn text into a tree the compiler can reason about
+tags: toolchain, compiler, parsing
+track: core
+
+The compiler front end first **lexes** the preprocessed text into tokens (`int`, `x`, `=`, `42`, `;`), then **parses** the token stream against the language grammar into an **AST** — an abstract syntax tree where `a + b * c` becomes a `+` node whose right child is a `*` node. Precedence, associativity, and matching braces live here; a missing semicolon or unbalanced parenthesis is a *parse* error.
+
+C++ is notoriously hard to parse because syntax alone is ambiguous: `x * y;` is a multiplication or a pointer declaration depending on whether `x` names a type. So the C++ parser can't be a pure grammar machine — it consults the symbol table while parsing (the "lexer hack" family of problems, and why `typename` is sometimes required in templates).
+
+```cpp
+a + b * c
+//    (+)          AST: precedence is structure,
+//   /   \         not left-to-right text order
+//  a    (*)
+//      /   \
+//     b     c
+```
+
+## fact: Semantic analysis is where templates finally become code
+tags: toolchain, compiler, templates
+track: core
+
+After parsing, **semantic analysis** walks the AST checking meaning: name lookup, type checking, overload resolution, implicit conversions, access control. "Cannot convert `const char*` to `int`" is a semantic error — the syntax was fine.
+
+Templates get special treatment: a template definition is only lightly checked when declared; the real work happens at the **point of instantiation**, when you use `std::vector<MyType>` with concrete arguments. Only then does the compiler substitute the types, re-run lookup and type checking, and generate an actual class or function. This is why template errors explode with page-long instantiation stacks, why a broken template can sit uncompiled in a header for months until someone instantiates it — and why C++20 concepts help, by checking requirements at the call site before instantiation dives in.
+
+```cpp
+template <class T>
+T max_of(T a, T b) { return a < b ? a : b; }   // checked shallowly here
+
+max_of(1, 2);        // instantiation point: max_of<int> generated now
+max_of(p1, p2);      // error appears HERE if P has no operator<
+```
+
+## fact: Optimization happens on IR, and -O2 is allowed to delete your code
+tags: toolchain, compiler, optimization
+track: core
+
+Compilers don't optimize your source or the final assembly — they lower the AST to an **intermediate representation** (LLVM IR, GCC GIMPLE) and run dozens of passes over it: **inlining** (paste the callee's body, enabling further passes), **constant folding** (`2 * 3600` becomes `7200` at compile time), **dead code elimination** (anything provably unobservable is removed), **vectorization** (rewrite a loop to process 4–16 elements per SIMD instruction).
+
+The flags are ratchet levels: `-O0` means no optimization, fast compiles, debuggable line-by-line — and is what you get by default. `-O2` enables the standard battery and is the production baseline. `-O3` adds aggressive loop transforms (more vectorization and unrolling) — often faster, sometimes bigger and occasionally slower. The classic trap: a benchmark loop whose result is never used is *dead code*, and `-O2` will happily delete it and report zero nanoseconds.
+
+```cpp
+for (int i = 0; i < 1'000'000; ++i)
+    sum += data[i];          // result unused afterwards?
+// -O2: entire loop removed (DCE). Benchmark says 0ns.
+// Fix: use the result, e.g. benchmark::DoNotOptimize(sum).
+```
+
+## fact: Code generation is a fight over sixteen registers
+tags: toolchain, compiler, codegen
+track: core
+
+The back end lowers optimized IR to real machine instructions: **instruction selection** (pick concrete opcodes for each IR operation), **scheduling** (order them to keep CPU pipelines busy), and **register allocation** — the hard one. Your function may juggle fifty live values; x86-64 gives roughly sixteen general-purpose registers. The allocator (graph coloring or linear scan) decides who gets a register and who gets **spilled** to a stack slot, adding memory traffic that never existed in your source.
+
+The back end also implements the platform **calling convention** (System V on Linux/macOS: first integer args in `rdi, rsi, rdx, rcx, r8, r9`, return in `rax`) — the contract that lets separately compiled functions call each other. Hot-loop performance often comes down to whether the allocator kept your working set in registers; too many live variables in a loop body is a real, measurable cost.
+
+```bash
+g++ -O2 -S hot.cpp -o hot.s      # read the generated assembly
+grep -c "rsp" hot.s              # spill traffic touches the stack
+```
+
+## fact: An object file is compiled code filed into named sections
+tags: toolchain, compiler, object-files
+track: core
+
+The assembler produces a **relocatable object file** (`.o`, ELF on Linux) — machine code plus bookkeeping, organized into sections: **.text** (the code, read-only + executable), **.rodata** (constants and string literals), **.data** (globals initialized to nonzero values — stored byte-for-byte in the file), **.bss** (zero/uninitialized globals — recorded as *just a size*, occupying no file space; the loader zero-fills it at startup). A 100 MB zeroed array costs nothing on disk in .bss but would bloat .data.
+
+The object file also carries a **symbol table** — names it defines and names it uses but expects someone else to define (undefined symbols) — and **relocations**: patch-lists saying "write the final address of `foo` here once the linker knows it." An object file is a puzzle piece: valid code, unresolved edges.
+
+```bash
+g++ -c m.cpp
+nm m.o          # T: defined in .text, D: .data, B: .bss, U: undefined
+size m.o        # bytes per section — note .bss counted but not stored
+```
+
+## fact: The linker is a symbol matchmaker, and the ODR is its blind spot
+tags: toolchain, compiler, linker
+track: core
+
+The linker merges object files: every *undefined* symbol must find exactly one *defined* symbol. Zero matches → `undefined reference`; two strong definitions → `multiple definition`. But C++'s **One Definition Rule** asks for more than the linker checks: the same inline function or class compiled into different TUs must be *identical*. If two TUs saw different versions of a header, the linker silently keeps one copy — which TUs' code now disagrees with — and you get undefined behavior, not an error.
+
+C++ function names are **mangled** — `checksum(const char*)` becomes `_Z8checksumPKc` — encoding types into the symbol so overloads coexist and link-time type mismatches surface. `extern "C"` switches a function to plain C naming, the lingua franca for calling C libraries or being called from them. **Static linking** copies library code into your binary (self-contained, larger, needs relink to update); **dynamic linking** records a dependency on a `.so`/`.dylib` resolved at load time (shared pages, independently updatable — and a new failure mode at deploy: the missing or wrong-version library).
+
+```cpp
+extern "C" int checksum(const char* s);  // link against C symbol "checksum"
+// without extern "C": undefined reference — C++ looked for _Z8checksumPKc
+```
+
+## fact: LTO optimizes across files, PGO optimizes for reality
+tags: toolchain, compiler, lto
+track: core
+
+Normal compilation optimizes one TU at a time: a function in `a.cpp` called from `b.cpp` can't be inlined, because the compiler never sees both bodies together. **Link-Time Optimization** (`-flto`) fixes this by storing IR (not just machine code) in object files and re-running optimization over the *whole program* at link time — cross-TU inlining, dead code stripping across files, devirtualization. Cost: much slower links, higher memory. It also quietly weakens the "just put it in a .cpp file" firewall for build times.
+
+**Profile-Guided Optimization** attacks a different blindness: the compiler guesses which branches are hot. PGO replaces guesses with measurements — build instrumented (`-fprofile-generate`), run a representative workload, rebuild with the profile (`-fprofile-use`). The compiler then lays out hot paths contiguously (better i-cache), inlines the calls that actually happen, and moves cold error paths out of the way. Real-world gains of 5–15% are common; the catch is keeping the training workload representative.
+
+```bash
+g++ -O2 -flto a.cpp b.cpp -o app          # whole-program view at link
+g++ -O2 -fprofile-generate app.cpp && ./app train.dat
+g++ -O2 -fprofile-use app.cpp -o app      # optimize for measured behavior
+```
+
+## fact: Debuggers and profilers see your binary through side tables
+tags: toolchain, compiler, debugging
+track: core
+
+The CPU executes raw machine code; everything a debugger shows you — file:line, variable names, types, stack frames — comes from **DWARF** debug info that `-g` embeds alongside the code, mapping instruction addresses back to source. `-g` doesn't slow the generated code down; it just makes the binary bigger (and production builds often `strip` it into a separate file, keeping it server-side to symbolicate crash dumps). `-O2 -g` is legal but surreal to step through: variables are "optimized out", lines execute out of order, inlined calls have no frame.
+
+Profilers like `perf` mostly don't trace — they **sample**: interrupt the process a few thousand times per second and record the instruction pointer plus call stack. Hot code is simply where samples pile up. To get stacks and names they need the symbol table and either frame pointers (`-fno-omit-frame-pointer`, the pragmatic prod default) or DWARF unwind info. A profile full of `[unknown]` means the toolchain stripped the map, not that the CPU is idle.
+
+```bash
+g++ -O2 -g -fno-omit-frame-pointer app.cpp -o app
+perf record -g ./app     # sample IP + call stacks
+perf report              # samples aggregated per function
+```
+
+## fact: Debugging is a protocol — reproduce, minimize, bisect, change one thing
+tags: debugging, mindset
+track: core
+
+Debugging feels like intuition but works like science, and the protocol has four steps. **Reproduce** first: a bug you cannot trigger on demand cannot be proven fixed. Pin down everything — exact input, environment variables, thread count, random seed. A "sometimes" bug becomes an "always" bug once you find the variable you weren't controlling. **Minimize** second: cut the input or the code in half, keep whichever half still fails, repeat. A 40-line reproducer is worth hours of staring at 40,000 lines, and tools like `creduce` automate this for compiler-ish bugs. **Bisect** third when the question is *"which change broke it?"*: `git bisect` binary-searches history, so 4,000 commits need only ~12 tests, and `git bisect run` makes it fully automatic given a script that exits 0 for good and nonzero for bad. Finally, **change one thing at a time**: every experiment should test a single hypothesis, and if you changed two things and the crash moved, you learned nothing. Keep notes — the fifth hypothesis has a way of quietly contradicting the second.
+
+```text
+$ git bisect start
+$ git bisect bad                  # HEAD is broken
+$ git bisect good v2.1            # last release that worked
+Bisecting: 512 revisions left to test after this (roughly 9 steps)
+$ git bisect run ./repro.sh       # exit 0 = good, 1-127 = bad, 125 = skip commit
+...
+abc1234 is the first bad commit
+$ git bisect reset
+```
+
+The rest of this track is tooling. Tools make the protocol fast; they never replace it.
+
+## fact: gdb/lldb essentials — ten commands cover ninety percent of sessions
+tags: debugging, gdb
+track: core
+
+Build with `-g` so the compiler emits DWARF debug info mapping machine code back to source lines and variables — `-g` by itself does not slow your program down, it just makes the binary bigger. What ruins debugging is optimization, so debug builds use `-O0` (nothing optimized, every variable inspectable) or `-Og` (light optimization tuned to stay debuggable — GCC's recommended edit-compile-debug default).
+
+The core vocabulary, identical in spirit across gdb and lldb:
+
+```text
+$ g++ -g -O0 parse.cpp -o parse
+$ gdb ./parse
+(gdb) break parse.cpp:42        # b — stop when this line is reached
+(gdb) run data.txt              # r — start the program with arguments
+(gdb) next                      # n — one line, stepping OVER calls
+(gdb) step                      # s — one line, stepping INTO calls
+(gdb) print row.size()          # p — evaluate any expression, even calls
+(gdb) bt                        # backtrace: the call chain that got you here
+(gdb) frame 2                   # jump to frame #2 from bt
+(gdb) info locals               # all locals of the current frame
+(gdb) finish                    # run until the current function returns
+(gdb) continue                  # c — resume until the next stop
+```
+
+Two habits complete the toolkit: `print` evaluates real expressions — `p rows[i].name`, even method calls — so you rarely need extra logging once stopped; and `bt` then `frame N` is the standard crash autopsy: find the deepest frame that is *your* code and inspect its locals there. For a process that is already running (a hung server, say), `gdb -p PID` attaches without restarting it.
+
+lldb, the default on macOS, uses the same words — `run`, `next`, `step`, `continue`, `bt`, `print` — with `frame select 2` for frame hopping, and `b parse.cpp:42` works as a breakpoint shorthand. Learn these ten and any C++ codebase on any platform is steppable; everything else in gdb is refinement of *where to stop*, which is the next lesson.
+
+## fact: Breakpoints beyond 'break' — conditions, watchpoints, catchpoints
+tags: debugging, breakpoints
+track: core
+
+Plain breakpoints stop too often. The refinements are what make a debugger surgical.
+
+**Conditional breakpoints** stop only when an expression is true: `break process.cpp:88 if id == 42` skips the 10,000 boring iterations. Retrofits work too: `condition 3 attempts > 5` adds a condition to existing breakpoint 3, and `ignore 3 100` skips its next 100 hits — perfect for "it crashes on roughly the hundredth call". `tbreak` is a one-shot breakpoint that deletes itself after the first hit (gdb's `start` command is exactly `tbreak main` + `run`).
+
+**Watchpoints** flip the question from *where* to *what*: `watch queue.size_` stops the program the instant that value changes, no matter which line changed it — the definitive answer to "who is corrupting this variable?" On x86 these use the CPU's four hardware debug registers, so they run at full speed; when gdb can't use them (too many, or the watched expression is too complex) it falls back to software watchpoints that single-step the whole program, orders of magnitude slower. `rwatch` stops on reads, `awatch` on both.
+
+**Catchpoints** hook events instead of locations: `catch throw` stops at the exact throw site of any exception (before the stack unwinds away the evidence), `catch catch` at the handler, and `catch syscall openat` at the OS boundary.
+
+```text
+(gdb) break process.cpp:88 if id == 42
+(gdb) watch queue.size_
+Hardware watchpoint 2: queue.size_
+(gdb) catch throw
+Catchpoint 3 (throw)
+```
+
+## fact: Reading a backtrace — inlined frames, ?? frames, and mangled names
+tags: debugging, backtrace
+track: core
+
+A backtrace is the call chain, newest frame first — and frame #0 is where the program *stopped*, which is often not where the *bug* is. Cultivate the habit of scanning downward for the first frame in *your* code.
+
+```text
+(gdb) bt
+#0  Table::at (this=0x0, i=7) at table.h:31
+#1  0x000055e4a1c22b10 in Report::total () at report.cpp:58
+#2  run () at main.cpp:19
+#3  0x00007f21e4a2b083 in ?? ()
+```
+
+Three things trip people up. **Inlined frames**: in optimized builds a call like `Report::total` may not exist as a real function anymore, but modern DWARF records the inlining, so gdb synthesizes a frame for it — you may see several frames sharing one PC address, all legitimate. **`?? ()` frames** mean gdb has an address but no symbol for it: a stripped binary, a library without debug info (install the distro's debuginfo package, or point gdb at unstripped builds), or JIT-generated code. A backtrace that is *all* `??` with nonsense addresses usually means the stack itself is corrupted — see the last lesson. **Mangled names**: gdb demangles automatically, but raw symbols like `_ZN5Table2atEm` still leak out of `nm`, linker errors, and `backtrace_symbols()` logs. Pipe them through `c++filt`:
+
+```text
+$ echo _ZN5Table2atEm | c++filt
+Table::at(unsigned long)
+```
+
+For multithreaded programs, `thread apply all bt` dumps every thread's stack — the first command to run on any deadlock.
+
+## fact: Core dumps — post-mortem debugging, and why reruns lie
+tags: debugging, core-dumps
+track: core
+
+A core dump is a snapshot of a dead process — its full memory and registers at the instant of the fatal signal. It turns "it crashed last night" into a debuggable artifact.
+
+They are usually disabled: `ulimit -c` prints the maximum core size and on most systems it defaults to `0`, meaning nothing is ever written. That is the first thing to check when a core is missing. Where cores land is decided by `/proc/sys/kernel/core_pattern` — a filename pattern, or a pipe into a collector: systemd distros route cores to `systemd-coredump`, where `coredumpctl list` shows recent crashes and `coredumpctl gdb` opens the latest one directly.
+
+```text
+$ ulimit -c unlimited            # allow cores in this shell
+$ ./server                       # ... Segmentation fault (core dumped)
+$ gdb ./server core              # post-mortem session
+(gdb) bt                         # the frozen moment of death
+(gdb) frame 2
+(gdb) print *request             # inspection works: memory is all there
+(gdb) continue
+The program is not being run.    # but execution is over — inspect only
+```
+
+Post-mortem debugging matters because of a cruel property of memory bugs: *"it works when I rerun it."* ASLR shuffles addresses, heap layout shifts, thread timing differs — so the same use-after-free reads harmless garbage on the rerun and crashes only under load at 3 a.m. The core preserves the one execution you could never reproduce; treat it as evidence, not an anecdote.
+
+## fact: Segfault anatomy — the fault address names the bug class
+tags: debugging, segfault
+track: core
+
+SIGSEGV reports *which address* was touched illegally, and that number is a diagnosis. Learn the patterns:
+
+```text
+fault address              prime suspect
+-------------              -------------
+0x0                        null pointer dereferenced directly
+0x10, 0x18, small values   null pointer + offset: p->field or p[i] via p == nullptr
+just below the stack       stack overflow: bt shows thousands of identical frames
+0x4141414141414141         wild pointer: data ("AAAAAAAA"!) interpreted as a pointer
+plausible heap address     use-after-free where the allocator returned pages to
+                           the OS — or a WRITE to a read-only page (string literals)
+pc == fault address        execution jumped through a corrupt function pointer
+```
+
+The small-offset rule is exact. Given `struct Session { long id; long flags; long counter; };` and `Session* s = nullptr`, reading `s->counter` computes `nullptr + 16` — the fault address is `0x10`, the member's offset. The address tells you not just "null pointer" but *which member access* died.
+
+Stack overflows are equally recognizable: the fault lands in the guard page just beyond the stack region (in one measured run, a stack local lived at `0x16fa82c9c` and the fault hit `0x16f287ff8` — almost exactly the 8 MB stack size below it), and the backtrace is one function repeated until gdb gives up.
+
+Poison patterns are gifts from debug allocators — values like `0xdeadbeef` or MSVC's `0xdddddddd` mean "freed memory", turning a mystery crash into a use-after-free confession. Production allocators rarely poison, which is one more reason release crashes look stranger than debug ones.
+
+## fact: Debugging optimized builds — <optimized out> and the release-only bug
+tags: debugging, optimized-builds
+track: core
+
+Attach a debugger to an `-O2` binary built with `-g` and it half-works: stepping jumps forward and backward because the compiler reordered and merged lines; `print x` answers `<optimized out>` because `x` lives in no register or memory slot at this point — the optimizer proved it didn't need to exist; whole functions are missing because they were inlined. None of this is corruption. It is honest debug info about dishonest-looking code. Mitigations: build daily-debug configurations with `-Og`; add `-fno-omit-frame-pointer` so stack walks stay reliable (profilers and crash reporters need it too); remember `-g` is compatible with every `-O` level — it never changes the generated code, only your visibility into it.
+
+The deeper trap is the bug that *only exists* at `-O2`. It is almost never a compiler bug. Optimizers transform code under the assumption that your program has no undefined behavior — so existing UB, harmless-looking at `-O0`, becomes load-bearing:
+
+```cpp
+int steps(int start) {
+    int n = 0;
+    for (int i = start; i > 0; i += i)   // doubling overflows: signed UB
+        ++n;
+    return n;
+}
+```
+
+Compiled and run with one mainstream compiler, `steps(1)` prints **31** at `-O0` (the int wrapped negative and the loop exited) and **0** at `-O2` (the optimizer assumed `i > 0` can't be falsified without UB and rewrote the loop). Same source, two answers, zero compiler bugs. So when a bug appears only in release, reach for UBSan and ASan on the *release* configuration before blaming the compiler.
+
+## fact: Reading an ASan report — an object's whole life story
+tags: debugging, asan
+track: core
+
+You already build tests with `-fsanitize=address`; the skill is reading what it prints. An ASan report for a heap bug is a biography in three stack traces. Here is a real (condensed) report for reading freshly-deleted memory:
+
+```text
+==4242==ERROR: AddressSanitizer: heap-use-after-free on address 0x6020000000b0
+READ of size 4 at 0x6020000000b0 thread T0
+    #0 in main uaf.cpp:5                      <- the illegal touch
+0x6020000000b0 is located 0 bytes inside of 4-byte region
+freed by thread T0 here:
+    #1 in main uaf.cpp:4                      <- the death
+previously allocated by thread T0 here:
+    #1 in main uaf.cpp:3                      <- the birth
+SUMMARY: AddressSanitizer: heap-use-after-free uaf.cpp:5 in main
+=>0x602000000080: fa fa 00 00 fa fa[fd]fa fa fa
+```
+
+Read it in story order: the object was **allocated** (uaf.cpp:3), then **freed** (uaf.cpp:4), then **read** (uaf.cpp:5). The three stacks localize both halves of every use-after-free argument — "who freed it early?" versus "who kept a stale pointer?" — which is precisely the debate you'd otherwise settle with hours of logging. The "0 bytes inside of 4-byte region" line tells you the access hit the object itself, not a neighboring one (overflow reports say "0 bytes to the right of").
+
+The shadow-byte map at the bottom encodes one byte per 8 application bytes: `00` addressable, `fa` heap redzone, `fd` freed memory — and the bracketed `[fd]` marks your access sitting in freed memory. You rarely need the map; the three stacks are the report.
+
+## fact: Debugging data races — heisenbugs, TSan reports, sleep injection
+tags: debugging, tsan
+track: core
+
+Races are the canonical *heisenbug*: attach gdb and the crash vanishes. No mystery — a race is a timing window often nanoseconds wide, and a debugger stopping all threads at breakpoints (or even a `printf`, which adds milliseconds and internal stdio locking) reshuffles the schedule so the window never opens. Observation changes timing; timing *is* the bug.
+
+So don't chase races with a stepper — build with `-fsanitize=thread` and run the tests. TSan doesn't need the crash to happen: it tracks the happens-before relation and reports two accesses that *could* have collided, with a stack for each side:
+
+```text
+WARNING: ThreadSanitizer: data race (pid=12621)
+  Write of size 4 at 0x000102ef8000 by thread T1:
+    #0 ... race.cpp:5                       <- the lambda's ++counter
+  Previous write of size 4 at 0x000102ef8000 by main thread:
+    #0 main race.cpp:6                      <- main's ++counter
+  Location is global 'counter' at 0x000102ef8000
+  Thread T1 (running) created by main thread at:
+    #1 main race.cpp:5
+```
+
+Read it as: *this* access raced with *that previous* access, on *this named variable*, and here's where the thread was even created. Both sides in one report — the two stacks are the whole diagnosis.
+
+When you suspect a specific interleaving, use **sleep injection**: drop a `std::this_thread::sleep_for(10ms)` into the suspected window. If the failure becomes reliable, you've proven the interleaving. A sleep that "fixes" it is the same proof — and never, ever the fix.
+
+## fact: Valgrind vs sanitizers — the tool for binaries you cannot rebuild
+tags: debugging, valgrind
+track: core
+
+Sanitizers instrument at compile time, which is exactly their limit: no source, no sanitizer. Valgrind's **memcheck** instruments the *binary* at runtime — your unmodified executable, the vendor's `.so`, the tool you only ship. That is the deciding question between the two families: *can you recompile?* Yes → ASan at ~2x slowdown. No → memcheck at 10–50x (it also serializes threads, so timing bugs hide under it).
+
+```text
+$ valgrind --leak-check=full ./thirdparty_tool
+==7723== Invalid read of size 4
+==7723==    at 0x4008A1: main (in ./thirdparty_tool)
+==7723==  Address 0x5a1c044 is 0 bytes inside a block of size 4 free'd
+==7723== LEAK SUMMARY:
+==7723==    definitely lost: 96 bytes in 2 blocks
+==7723==    indirectly lost: 480 bytes in 12 blocks
+==7723==    still reachable: 72,704 bytes in 1 blocks
+```
+
+Read leaks in that order: *definitely lost* = no pointer to it anywhere, a true leak; *indirectly lost* = reachable only through leaked blocks (fix the parent); *still reachable* = pointed-to at exit, usually benign singletons. Memcheck also flags uninitialized reads — add `--track-origins=yes` to see where the garbage was born. Blind spot: it puts no redzones on the stack, so overflows *within* a stack frame sail past it (ASan catches those).
+
+The neglected sibling is **massif** (`valgrind --tool=massif`, then `ms_print massif.out.<pid>`): a heap profiler that snapshots usage over time and attributes it to allocation sites — the tool for "no leak reported, but RSS climbs forever", which is usually a cache that only grows.
+
+## fact: strace and /proc — debugging at the syscall boundary
+tags: debugging, strace
+track: core
+
+Some bugs live below your code: the program hangs, a config file "doesn't exist" though you're staring at it, a socket loops on EAGAIN. For those, watch the syscall boundary — on Linux, `strace` prints every syscall with arguments and return values, no recompile, and `-p` attaches to an already-running process.
+
+The classic: a hung server using **no CPU**. Zero CPU means it's not spinning — it's *blocked in a syscall*, and strace shows which one, forever un-returning:
+
+```text
+$ strace -f -p 8123
+strace: Process 8123 attached
+read(7,                                  <- blocked reading fd 7... but what IS fd 7?
+$ lsof -p 8123                           # map fd numbers to real things
+server 8123 vlad 7u FIFO ... /run/app/events.pipe    <- a pipe nobody writes to
+```
+
+A `futex(...)` line instead means it's waiting on a lock or condition variable — switch to `gdb -p` and `thread apply all bt` for the deadlock. For "file not found", `strace -e trace=file ./tool` prints every path the process *actually* opens — ending arguments about search paths in one line: `openat(AT_FDCWD, "/etc/tool/conf.d/main.cfg", O_RDONLY) = -1 ENOENT`.
+
+`ltrace` does the same at the library-call level. `/proc/PID/` rounds out the kit: `status` shows the state letter (`R` running, `S` sleeping, `D` uninterruptible kernel I/O — the unkillable one, often NFS, `Z` zombie), `fd/` lists descriptors, `wchan` names the kernel wait. macOS equivalents: `dtruss`, `fs_usage`, and `sample PID` for a no-debugger backtrace.
+
+## fact: Stack corruption — why the crash site is not the bug site
+tags: debugging, stack-corruption
+track: core
+
+Locals, saved registers, and the function's return address share the stack. Overflow a local buffer and you overwrite your neighbors — and the symptom appears wherever the *victim* is used, not where the overflow happened. An off-by-one into an adjacent local makes a variable change value "with no write in sight" (a watchpoint from lesson 3 catches the culprit red-handed). Overwrite the return address and the function's body completes in perfect health, then *returns into garbage* — the crash lands in an unrelated function or in a backtrace full of `??`, and nothing in the visible state points at the guilty buffer. This time-and-place gap between cause and symptom is the defining cruelty of memory corruption.
+
+Stack canaries narrow the gap: `-fstack-protector` (and the stronger `-strong`/`-all` variants) places a secret value between the locals and the return address and verifies it in the function epilogue. This program, built with `-fstack-protector-all`:
+
+```cpp
+void fill(int n) {
+    char buf[8];
+    for (int i = 0; i < n; ++i) buf[i] = 'A';       // n = 24: 16 bytes too far
+    std::fprintf(stderr, "body finished normally\n"); // this DOES print
+}
+int main() { fill(24); }
+```
+
+prints its message, then aborts at the return — glibc announces `*** stack smashing detected ***`. Note what that demonstrates: even the canary detects at *epilogue*, not at the overflowing write. Only ASan's stack redzones stop the write itself. The general law of weird bugs: prefer any tool that moves detection closer to the moment of corruption.
+
+## quiz: Match each fault address to its bug class
+tags: debugging, segfault
+track: core
+difficulty: medium
+
+Three programs die with SIGSEGV at these fault addresses:
+
+```text
+A: 0x0000000000000018
+B: 0x00007ffc9a3feff8   (just below the thread's stack region)
+C: 0x4141414141414141
+```
+
+- [ ] A: stack overflow, B: null deref, C: use-after-free
+- [x] A: null pointer + member offset, B: stack overflow, C: wild pointer from overwritten data
+- [ ] A: wild pointer, B: use-after-free, C: null pointer + member offset
+- [ ] A: use-after-free, B: wild pointer, C: stack overflow
+
+> Small fault addresses like 0x18 are a null pointer plus an offset — `p->field` where the field sits 24 bytes into the struct. An address just past the stack region is the guard page: stack overflow, confirmed by a backtrace of thousands of identical frames. And 0x41 is ASCII 'A' — data ("AAAAAAAA") is being used as a pointer, typically because an overflow overwrote one.
+
+## quiz: Which gdb command stops the program when a variable's value changes?
+tags: debugging, gdb
+track: core
+difficulty: easy
+
+You need to find which code is corrupting `balance` — you don't know where the write happens.
+
+- [ ] break balance
+- [x] watch balance
+- [ ] display balance
+- [ ] catch balance
+
+> `watch balance` sets a watchpoint: the program stops the instant the value changes, no matter which line wrote it — the direct answer to "who is modifying this?". `break` needs a location, `display` merely re-prints an expression at each stop, and `catch` hooks events like `throw` or syscalls, not variables. Related: `rwatch` stops on reads, `awatch` on both.
+
+## quiz: gdb prints "<optimized out>" for a local variable. What does it mean?
+tags: debugging, optimized-builds
+track: core
+difficulty: medium
+
+- [ ] The variable's memory was corrupted, so gdb refuses to print it
+- [ ] The debug info is broken; recompiling with -g will fix it at any -O level
+- [x] At this point the value is not stored in any register or memory slot — the optimizer eliminated it
+- [ ] The variable is in another thread's stack frame
+
+> `<optimized out>` is honest debug info: the compiler proved it didn't need to materialize the value here (folded it into another computation, or its live range ended), so there is nothing for gdb to read. It is not corruption and not a gdb bug. The fix is building that file with `-O0` or `-Og` — `-g` alone doesn't help, because `-g` never changes code generation.
+
+## quiz: A crash reproduces every run — until you attach gdb. Why does it vanish?
+tags: debugging, heisenbug
+track: core
+difficulty: medium
+
+- [ ] gdb inserts memory barriers around shared variables, fixing the race
+- [ ] Compiling with -g adds synchronization to std::thread
+- [x] The bug is timing-sensitive (likely a race), and the debugger's interference reshuffles thread scheduling so the window never opens
+- [ ] gdb runs the program single-threaded
+
+> A race is a timing window, often nanoseconds wide. A debugger stopping threads at breakpoints — or even an added printf, with its milliseconds and internal stdio lock — changes the schedule enough that the interleaving never occurs. gdb adds no barriers and doesn't force single-threading; the bug is still there, just hidden. The right tool is TSan (`-fsanitize=thread`), which reports the race without needing it to misfire.
+
+## quiz: An ASan report says heap-use-after-free and shows two stacks besides the bad access. What do they show?
+tags: debugging, asan
+track: core
+difficulty: medium
+
+```text
+==4242==ERROR: AddressSanitizer: heap-use-after-free ...
+READ of size 4 at 0x6020000000b0 thread T0
+    #0 ...
+freed by thread T0 here:
+    #0 ...
+previously allocated by thread T0 here:
+    #0 ...
+```
+
+- [ ] The two most recent function calls before the crash
+- [ ] The same access from two different threads that raced
+- [x] Where the memory was freed, and where it was originally allocated
+- [ ] The shadow-memory mapping of the address
+
+> The report is the object's biography: the access stack shows the illegal read, "freed by" shows the deallocation that made it illegal, and "previously allocated by" shows where the object was born. Together they settle the two competing theories of any use-after-free — "freed too early" vs "pointer kept too long" — without any logging or guesswork.
+
+## quiz: Your program segfaulted but no core file appeared. What do you check first?
+tags: debugging, core-dumps
+track: core
+difficulty: easy
+
+- [ ] Whether the binary was compiled with -g
+- [x] ulimit -c — the core size limit is usually 0 by default
+- [ ] Whether gdb is installed
+- [ ] Whether ASLR is enabled
+
+> Most systems default the core size limit to 0, so no core is ever written; `ulimit -c unlimited` enables them for the shell. Only then do location questions arise (`/proc/sys/kernel/core_pattern`, or `coredumpctl` on systemd distros). `-g` affects how *readable* the core is in gdb, not whether it is dumped, and ASLR/gdb have nothing to do with core creation.
+
+## quiz: A bug appears at -O2 but vanishes at -O0. What is the most likely cause?
+tags: debugging, optimized-builds
+track: core
+difficulty: medium
+
+- [ ] An optimizer bug in the compiler — file a report
+- [ ] -O2 strips debug info, which changes program behavior
+- [x] Undefined behavior in your code that the optimizer's assumptions exposed
+- [ ] -O2 uses a smaller stack, causing overflow
+
+> Optimizers transform code under the assumption the program has no UB — signed overflow, out-of-bounds reads, strict-aliasing violations. Code whose UB was harmless at -O0 breaks when a pass exploits the assumption (e.g. deleting a "redundant" null check or overflow test). Genuine optimizer bugs exist but are rare; debug info never affects codegen. First move: UBSan and ASan on the release configuration, not a compiler bug report.
+
+## quiz: What must you have before git bisect can find the commit that broke things?
+tags: debugging, bisect
+track: core
+difficulty: easy
+
+- [ ] A branch containing only the suspect commits
+- [x] A reliable test that classifies any given commit as good or bad
+- [ ] CI history for every commit in the range
+- [ ] The name of the file containing the bug
+
+> Bisecting is a binary search over history, and a binary search is only as good as its comparison: you need a check that deterministically answers "does this commit have the bug?" — plus one known-good and one known-bad commit to bound the range. A flaky reproducer poisons the search, since one wrong answer sends the search into the wrong half. With a script, `git bisect run ./repro.sh` automates the whole hunt (exit 0 = good, 1-127 = bad, 125 = skip).
+
+## quiz: You set a watchpoint and the program now runs orders of magnitude slower. Why?
+tags: debugging, breakpoints
+track: core
+difficulty: hard
+
+```text
+(gdb) watch cfg.entries
+Watchpoint 2: cfg.entries
+```
+
+- [ ] Watchpoints always cost this much — that is the price of watching memory
+- [ ] The watched variable is in a shared library, forcing gdb to reload symbols
+- [x] gdb fell back to a software watchpoint, single-stepping the program and checking the value after each step
+- [ ] The watchpoint is triggering repeatedly without stopping
+
+> Note the message says "Watchpoint", not "Hardware watchpoint". Hardware watchpoints use the CPU's debug registers (four on x86) and run at full speed — but when they're exhausted, or the watched expression is too large or complex for a register, gdb silently falls back to software watching: single-step, check, repeat. Fixes: watch a specific scalar address (`watch -l`, or `watch *&var`), reduce the number of watchpoints, and see `show can-use-hw-watchpoints`.
+
+## quiz: A server process is hung and using 0% CPU. Which tool answers "what is it stuck on?" fastest?
+tags: debugging, hangs
+track: core
+difficulty: medium
+
+- [ ] perf record — sample where it spends its CPU time
+- [x] strace -p PID (or gdb attach + thread apply all bt) — see the blocked syscall
+- [ ] valgrind — rerun the server under memcheck
+- [ ] Restart it under -O0 and wait for the hang again
+
+> Zero CPU means the process isn't spinning — it is blocked in a syscall. `strace -p` shows the un-returning call immediately: `read(7,` means waiting on fd 7 (then `lsof -p` tells you what fd 7 is), `futex(` means a lock or condition variable — that one's for `gdb -p` and `thread apply all bt` to expose the deadlock. perf profiles CPU use, which is the right tool for the *opposite* hang (100% CPU spin); valgrind and rebuilds both lose the live, already-hung state.
+
+## fact: Sanitizers are runtime bug detectors — one recompile, four families
+tags: toolchain, sanitizers
+track: core
+
+Sanitizers instrument your code at compile time so entire bug classes crash loudly with a stack trace instead of corrupting memory silently. **ASan** (`-fsanitize=address`): heap/stack buffer overflows, use-after-free, double-free, leaks — roughly 2x slowdown. **UBSan** (`-fsanitize=undefined`): signed overflow, null deref, misaligned access, bad shifts, out-of-range enum loads — so cheap (tens of percent) some shops ship it enabled. **TSan** (`-fsanitize=thread`): data races and lock-order inversions — the only practical race detector, at 5–15x slowdown and heavy memory. **MSan** (`-fsanitize=memory`): reads of uninitialized memory — powerful but demands *every* linked library be instrumented, so it's mostly a dedicated-CI tool.
+
+Rules of thumb: ASan+UBSan combine and belong in every test run; TSan must run alone (it and ASan/MSan are mutually exclusive); a sanitizer only checks code that *executes*, so coverage is only as good as your tests.
+
+```bash
+g++ -g -O1 -fsanitize=address,undefined tests.cpp -o tests   # the CI staple
+g++ -g -O1 -fsanitize=thread mt_tests.cpp -o mt_tests        # races, alone
+./tests   # bug -> immediate report with stack trace, nonzero exit
+```
+
+## fact: Static analysis finds bugs without running anything — if you let it fail the build
+tags: toolchain, static-analysis
+track: core
+
+Static analysis inspects source instead of executing it. Tier one is the compiler itself: `-Wall -Wextra` is the floor (despite the name, `-Wall` is far from all), and the culture that matters is **`-Werror` — warnings fail the build**. A warning that doesn't fail CI is a warning everyone learns to scroll past; at zero-warning steady state, every new one is signal. Adopting `-Werror` late is painful, so ratchet: fix a category, then lock it.
+
+Tier two is **clang-tidy**: hundreds of checks that know C++ idioms, not just syntax — use-after-move, dangling `string_view`, missing `override`, modernize-* and performance-* families — many with automatic fixes (`--fix`). It runs on one TU at a time using `compile_commands.json` (the CMake lesson's export flag is the setup). Beyond it sit whole-program analyzers (clang static analyzer, Coverity). Static analysis and sanitizers are complements, not rivals: tidy sees paths your tests never execute; sanitizers see truths only visible at runtime.
+
+```bash
+# .clang-tidy at repo root; version it like code
+clang-tidy --checks='bugprone-*,performance-*,modernize-use-override' \
+           -p build/ src/engine.cpp
+g++ -Wall -Wextra -Werror -c src/engine.cpp   # warnings are errors
+```
+
+## fact: vcpkg and conan bring package management to a language without one
+tags: toolchain, package-managers
+track: core
+
+C++ has no built-in equivalent of pip — the void is filled by system packages (versions frozen by your distro), vendoring/FetchContent (you compile everything), and two real package managers. **vcpkg** (Microsoft, curated central registry): in manifest mode you commit a `vcpkg.json` naming dependencies; a CMake toolchain file makes `find_package` find them, building from source per **triplet** (`x64-linux`, `arm64-osx`) with binary caching. **conan** (JFrog, decentralized): recipes in `conanfile.txt/.py`, **profiles** capturing compiler/stdlib/flags, and first-class *prebuilt binary* packages — it downloads a compatible binary if one matches your profile, else builds.
+
+Why this is hard enough to need tooling: a C++ binary package is only compatible if compiler, standard library, CXX standard, build type, and ABI-relevant flags all line up — that's exactly what triplets and profiles encode. Rough heuristic: vcpkg for CMake-centric simplicity, conan for binary distribution and org-internal registries. Either beats hand-rolled `ExternalProject` scripts.
+
+```bash
+# vcpkg manifest mode: vcpkg.json next to CMakeLists.txt
+# { "dependencies": [ "fmt", "boost-asio" ] }
+cmake -S . -B build \
+  -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
+# deps resolve during configure; find_package(fmt) now works
+```
+
+## fact: Build speed is a tooling problem before it's a hardware problem
+tags: toolchain, build-speed
+track: core
+
+Three multipliers, in order of adoption. **ninja** over make: same work, better engine — accurate dependency handling, maximal parallelism, and near-instant no-op builds (make can spend seconds just stat-ing files; ninja was built for the rebuild-after-one-edit loop). With CMake it's one flag: `-G Ninja`. **ccache** caches compilations: it hashes the preprocessed input and flags, and on a hit returns the previous object file instead of invoking the compiler — transformative when switching branches, rebuilding after clean, or across CI runs with a shared cache (`CMAKE_CXX_COMPILER_LAUNCHER=ccache`).
+
+**Unity builds** attack C++'s structural cost: every TU re-parses every header it includes — the same megabytes of `<vector>` and `<string>` parsed hundreds of times. Concatenating groups of .cpp files (`CMAKE_UNITY_BUILD=ON`) amortizes that, often 2–5x on full builds. Costs: `static` globals and anonymous namespaces from different files now share a TU and can collide, missing-include bugs hide (a header leaks in from a sibling), and touching one file recompiles its whole group. The deeper fix for header cost is precompiled headers or C++20 modules.
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+cmake --build build          # cold: compiler speed; warm: cache speed
+ccache -s                    # hit/miss statistics
+```
+
+## fact: API compatibility is about recompiling; ABI is about not recompiling
+tags: toolchain, abi
+track: core
+
+**API** is the source-level contract — if it changes, your code fails to *compile*. **ABI** (Application Binary Interface) is the machine-level contract between *already-compiled* binaries: struct layouts, vtable order, calling conventions, name mangling, inline function semantics. ABI breaks don't fail cleanly — the call site computes field offsets from the headers *it* was built with, so a mismatch reads garbage at runtime. Change a class's members, reorder virtuals, or flip a size-affecting `#define`, and every binary compiled against the old layout is silently wrong.
+
+Passing `std::string` across a `.so` boundary is the classic hazard: caller and library must agree on the *exact* internal layout, which varies by standard library (libstdc++ vs libc++), by vendor version (libstdc++'s C++11 dual-ABI split — `_GLIBCXX_USE_CXX11_ABI`), and by build flags (debug/iterator-checked modes). The escape hatch is the **C ABI** — the one contract that's stable per platform: `extern "C"` functions, primitive types, and opaque pointers. It's why plugin systems and cross-language FFI boundaries are C even when both sides are C++.
+
+```cpp
+// fragile across .so boundary:
+std::string get_name();                     // layout must match exactly
+// stable C ABI surface:
+extern "C" engine_t* engine_create(void);   // opaque handle
+extern "C" int engine_name(engine_t*, char* buf, size_t len);
+```
+
+## fact: Headers work because of inline — and break because of ODR
+tags: toolchain, odr
+track: core
+
+A function *defined* in a header gets compiled into every TU that includes it — normally a `multiple definition` link error. `inline` (and its implicit forms: member functions defined in-class, templates, `constexpr` functions, C++17 `inline` variables) changes the deal: multiple definitions are allowed, each TU emits a weak/COMDAT copy, and the linker keeps one. The One Definition Rule's fine print is the contract: all those definitions must be *token-for-token identical*. If two TUs saw different versions — a stale object file, an `#ifdef` that differs, two versions of a vendored header — the linker still silently picks one, and the TUs built against the other are now undefined behavior. Symptom: works in Debug, crashes in Release, changes with link order.
+
+Related hygiene at `.so` boundaries: ELF exports every symbol by default, bloating symbol tables, slowing loads, and letting duplicate symbols from different libraries interpose each other. Shared libraries should build with `-fvisibility=hidden` and export an explicit annotated API — which also keeps two libraries' private copies of the same inline function from colliding.
+
+```cpp
+// header — legal in many TUs, but every TU must see identical tokens
+inline int price_ticks(double px) {
+#ifdef FAST_MATH                    // differs per TU? silent ODR violation
+    return int(px * 100);
+#else
+    return std::lround(px * 100);
+#endif
+}
+```
+
+## fact: Cross-compilation splits the world into host and target
+tags: toolchain, cross-compilation
+track: core
+
+Cross-compiling means the **host** (machine running the compiler, say x86-64 Linux) differs from the **target** (machine running the binary — an ARM board, an Android phone). You need three things. A **cross toolchain**: compiler, assembler, linker emitting target code — named by **triplet** (`aarch64-linux-gnu-g++`), or clang with `--target=`. A **sysroot**: a directory mirroring the target's `/usr/include` and `/usr/lib`, because your program must compile against the *target's* libc and libraries, not the host's — most "undefined symbol" and "wrong ELF class" errors are sysroot problems. And a build system told about the split: in CMake, a **toolchain file** passed as `-DCMAKE_TOOLCHAIN_FILE=` sets `CMAKE_SYSTEM_NAME`, the compilers, sysroot, and find-root rules so `find_package` searches the sysroot instead of the host.
+
+The subtle traps: anything *executed during the build* (code generators, `try_run` probes) must be built for the host, not the target; and pkg-config/find modules silently leaking host paths into a target build.
+
+```cmake
+# aarch64.toolchain.cmake
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR aarch64)
+set(CMAKE_C_COMPILER   aarch64-linux-gnu-gcc)
+set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
+set(CMAKE_SYSROOT /opt/sysroots/aarch64-target)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)   # search sysroot, not host
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+```
+
+## fact: Reproducible builds: same source in, bit-identical binary out
+tags: toolchain, reproducible-builds
+track: core
+
+A build is **reproducible** when the same source and toolchain produce a *bit-identical* binary — anywhere, anytime, by anyone. The classic saboteurs: `__DATE__`/`__TIME__` macros, absolute build paths baked into debug info (`-ffile-prefix-map=/home/ci=.` fixes that), archive timestamps, and nondeterministic link or codegen ordering. The `SOURCE_DATE_EPOCH` convention pins every embedded timestamp. The prerequisite is **hermeticity**: the build depends only on *declared* inputs — pinned compiler version, pinned dependencies, no "whatever is in /usr/include today". Docker images with pinned toolchains get most of the way; Bazel-style systems enforce it by sandboxing every action, which is also what makes remote caching sound — a cache key is trustworthy only if it captures *all* inputs.
+
+Why regulated and HFT shops insist on it: you must be able to prove the binary trading in production corresponds exactly to an audited source revision, reproduce last Tuesday's build to debug a live incident, and detect supply-chain tampering — a rebuilt-from-source binary that doesn't match the deployed hash is either a hermeticity bug or a very bad day.
+
+```bash
+export SOURCE_DATE_EPOCH=1700000000
+g++ -O2 -g -ffile-prefix-map=$PWD=. -c engine.cpp
+# two clean builds, then verify:
+sha256sum build-a/engine.o build-b/engine.o   # hashes must match
+```
+
+## fact: CPython compiles your code too — just not to machine code
+tags: toolchain, interpreter, bytecode
+track: python
+
+"Interpreted" undersells what CPython does. Your source goes through a real compiler pipeline: **tokenizer** (text → tokens like `NAME 'price'`, `OP '*'`), **parser** (tokens → AST, via a PEG grammar since 3.9), **compiler** (AST → **bytecode**, instructions for CPython's stack-based virtual machine). Only then does interpretation start: the **ceval loop** — a giant dispatch loop in C — fetches each bytecode instruction and executes its handler.
+
+The difference from C++ is *where the pipeline stops*. g++ continues down to native machine code ahead of time; CPython stops at portable bytecode and pays for the rest at runtime, one dispatch per instruction. That late binding is also what buys Python its dynamism — the meaning of `a + b` is decided each time the instruction runs.
+
+```python
+import ast
+print(ast.dump(ast.parse("total = price * 2")))
+# Module(body=[Assign(targets=[Name(id='total', ctx=Store())],
+#   value=BinOp(left=Name(id='price', ctx=Load()), op=Mult(),
+#               right=Constant(value=2)))])
+```
+
+## fact: dis shows you the bytecode your function actually runs
+tags: toolchain, interpreter, dis
+track: python
+
+The `dis` module disassembles any function into the VM instructions the ceval loop will execute — the Python equivalent of reading `-S` assembly output. The VM is stack-based: operands are pushed, operations pop them and push results. `LOAD_FAST` pushes a local variable, `LOAD_CONST` pushes a constant, `BINARY_OP` pops two and pushes the result, `STORE_FAST` pops into a local, `RETURN_VALUE` returns the top of stack.
+
+Reading `dis` output answers real questions: why local variable access beats globals (`LOAD_FAST` is an array index; `LOAD_GLOBAL` is a dict lookup), what a comprehension actually costs, and what CPython's specializing interpreter (3.11+) rewrites your instructions into. Exact opcode names shift between versions — 3.14 below emits `LOAD_FAST_BORROW`, a specialized `LOAD_FAST` — but the shape is stable.
+
+```python
+import dis
+def greet(name):
+    msg = 'hello ' + name
+    return msg
+dis.dis(greet)
+#  4    LOAD_CONST               0 ('hello ')
+#       LOAD_FAST_BORROW         0 (name)
+#       BINARY_OP                0 (+)
+#       STORE_FAST               1 (msg)
+#  5    LOAD_FAST_BORROW         1 (msg)
+#       RETURN_VALUE
+```
+
+## fact: .pyc files cache compilation, not execution
+tags: toolchain, interpreter, pyc
+track: python
+
+Compiling source to bytecode takes time, so CPython caches the result: importing `mymod.py` writes `__pycache__/mymod.cpython-314.pyc` — the marshaled code object, tagged with the interpreter version so different Pythons coexist. The payoff is *import* speed only; the bytecode runs at exactly the same speed either way. (Note: only imported modules get cached — the script you run directly is compiled fresh each time.)
+
+Staleness is handled by a 16-byte header: a **magic number** (bytecode format version — any pyc from another version is ignored wholesale), flags, and the source file's **mtime and size**. On import, CPython compares the recorded mtime/size against the current `.py`; any mismatch triggers silent recompilation. PEP 552 added an alternative **hash-based** mode (flags bit set, SipHash of the source instead of mtime) for reproducible builds and build systems that don't preserve timestamps. Practical corollary: deleting `__pycache__` is never dangerous, just slightly slow.
+
+```python
+import struct
+raw = open('__pycache__/mymod.cpython-314.pyc', 'rb').read(16)
+magic, flags, mtime, size = struct.unpack('<4sIII', raw)
+# flags == 0 -> timestamp-based: stale if mtime/size differ from mymod.py
+```
+
+## fact: The GIL serializes bytecode, not your whole program
+tags: toolchain, interpreter, gil
+track: python
+
+The Global Interpreter Lock is a single mutex a thread must hold to *execute Python bytecode*. It exists because CPython's memory management — reference counts mutated on nearly every operation — isn't thread-safe on its own; one lock around the interpreter is cheaper than fine-grained locking everywhere. The consequence: within one process, only one thread runs Python code at a time. Four CPU-bound threads take roughly as long as one (often slightly longer, from lock contention).
+
+Switching is time-based: a running thread checks for a drop request at bytecode boundaries, and a waiting thread triggers one every 5 ms by default (`sys.getswitchinterval()`). Crucially, the GIL is *released* around blocking I/O and inside many C extensions — so threads genuinely help I/O-bound work, and NumPy-heavy code can use cores. For CPU-bound pure Python, the classic answer is `multiprocessing` (one GIL per process); since 3.13 there's also an experimental **free-threaded** build with the GIL removed entirely.
+
+```python
+import sys
+sys.getswitchinterval()   # 0.005 — a waiting thread requests the GIL
+                          # after 5ms; holder yields between bytecodes
+```
+
+## fact: CPython is slow where a JIT would be fast — and that's a design choice
+tags: toolchain, interpreter, jit
+track: python
+
+Two taxes dominate. **Dynamic lookup**: `obj.method()` can't be resolved ahead of time — every call walks the instance dict, then the class and its MRO, because anything may have been monkey-patched between calls. C++ resolves the same call to a fixed offset at compile time. **Boxing**: there are no raw machine ints; `1 + 2` operates on heap-allocated `PyLong` objects with type checks and refcount traffic per operation, which is also why a million-element Python list of ints is many times larger than a C array.
+
+A **JIT** (just-in-time compiler) attacks both: watch the running program, observe that `x` in this loop is always an int, compile a specialized native-code version with unboxed arithmetic, and guard it (deoptimize if the assumption breaks). **PyPy** does exactly this and runs pure-Python loops 5–50x faster. CPython is converging on the same playbook in-tree: 3.11's specializing adaptive interpreter rewrites hot bytecodes based on observed types, and 3.13 added an experimental copy-and-patch JIT.
+
+```python
+x = 0
+for i in range(1_000_000):
+    x += i        # CPython: boxed PyLongs, per-iteration dispatch
+                  # PyPy JIT: observed int -> native add in a register
+```
+
+## fact: Fast Python is Python that hands the loop to C
+tags: toolchain, interpreter, c-extensions
+track: python
+
+CPython's escape hatch is the **C API**: a compiled extension module looks like a normal import but its functions run native code. This is the NumPy pattern — `a + b` on two arrays executes *one* bytecode dispatch, then a compiled C loop processes a million elements with unboxed doubles in contiguous memory. The interpreter overhead is amortized across the whole array instead of paid per element. Long-running C work can also release the GIL, so it parallelizes across threads.
+
+The corollary is the golden rule of numeric Python: **don't write the loop yourself**. A Python-level `for` over a NumPy array is the worst of both worlds — per-element dispatch *plus* boxing each scalar out of the array. Vectorize, or move the kernel to C/C++ yourself via Cython, pybind11, or the raw C API: the same escape hatch NumPy uses is how C++ libraries grow Python bindings.
+
+```python
+import numpy as np
+a = np.arange(1_000_000)
+b = a * 2                 # one dispatch, C loop, GIL-friendly
+c = [x * 2 for x in a]    # ~million dispatches, boxes every element
+```
+
+## quiz: Both files compile, the build still fails — which stage, and why?
+tags: toolchain, compiler, linker
+track: core
+
+`legacy.c` (compiled as C) defines `int checksum(const char* s)`. Your C++ code declares it in a header and calls it. Both files compile cleanly, but the build fails:
+
+```text
+undefined reference to `checksum(char const*)'
+```
+
+- [ ] The preprocessor — the header declaring `checksum` was not found
+- [ ] The compiler front end — the declaration's types don't match the definition
+- [x] The linker — C++ looks for a mangled symbol like `_Z8checksumPKc`, but the C object exports plain `checksum`; declare it `extern "C"`
+- [ ] The assembler — C and C++ produce incompatible object file formats
+
+> Each stage owns an error class: a missing header dies in the preprocessor, a missing semicolon in the compiler front end, an unresolved symbol only at link time. C++ mangles names — encoding parameter types into the symbol so overloads can coexist — so the C++ caller wants `_Z8checksumPKc` while the C object defines `checksum`. Wrapping the declaration in `extern "C"` disables mangling and makes both sides agree. Object formats are identical for C and C++; the assembler is not involved.
+
+## quiz: What does #pragma once actually prevent?
+tags: toolchain, compiler, preprocessor
+track: core
+
+- [ ] The same symbol being defined in two different .cpp files (a link error)
+- [x] The same header's contents being pasted twice into one translation unit
+- [ ] Other headers from re-declaring names this header declares
+- [ ] ODR violations across the whole program
+
+> `#include` is textual paste; without protection, a header reached twice (directly and via another header) would define its classes twice *in that one TU* — an immediate compile error. `#pragma once`, like classic include guards, makes the second inclusion expand to nothing. Its scope ends at the translation unit boundary: it does nothing about two .cpp files both defining the same symbol, and nothing for cross-TU ODR discipline.
+
+## quiz: Two TUs saw different versions of an inline function — what happens?
+tags: toolchain, compiler, odr
+track: core
+
+`a.cpp` was compiled against yesterday's `price.h`; `b.cpp` against today's, in which the inline function `price_ticks()` changed. You link both object files together.
+
+- [ ] The linker reports a multiple definition error
+- [ ] The linker reports an ODR violation and picks the newer definition
+- [x] It links cleanly; the linker silently keeps one copy, and the program has undefined behavior
+- [ ] Each TU keeps calling its own version, which is well-defined
+
+> Inline functions emit a weak (COMDAT) copy in every TU that uses them, and the linker's job is to deduplicate — it assumes the copies are identical, as the ODR requires, and does not compare them. One definition survives; the TU built against the other now runs code disagreeing with what it was compiled against. That's undefined behavior with the classic signature: links fine, works in Debug, misbehaves in Release or when link order changes.
+
+## quiz: Static vs dynamic linking — which tradeoff is stated correctly?
+tags: toolchain, compiler, linking
+track: core
+
+- [ ] Dynamic linking copies the library into the executable, so the binary is larger but self-contained
+- [ ] Static linking lets you patch a shared library and fix every already-deployed program without relinking
+- [x] Static linking yields a self-contained binary at the cost of size and needing a relink to pick up library fixes; dynamic linking shares and updates libraries independently but can fail at load time with a missing or wrong-version .so
+- [ ] The two produce identical deployment behavior; the difference is only build speed
+
+> Static linking (`libfoo.a`) copies the needed library code into your executable: nothing to install on the target machine, but every binary carries its own copy and a library fix means relink-and-redeploy. Dynamic linking (`libfoo.so`) records a dependency resolved at load time: one shared copy, independently patchable — and a new deployment failure mode when the library is absent or ABI-incompatible. The first two options describe each approach with the other's properties.
+
+## quiz: Your benchmark loop reports 0 ns at -O2 — what happened?
+tags: toolchain, compiler, optimization
+track: core
+
+```cpp
+auto t0 = clock::now();
+long sum = 0;
+for (int i = 0; i < 1'000'000; ++i)
+    sum += i;                     // sum never used afterwards
+auto t1 = clock::now();           // t1 - t0 ~ 0ns at -O2
+```
+
+- [ ] The CPU executed the loop speculatively before `t0` was taken
+- [ ] -O2 vectorized the loop, making it too fast to measure
+- [x] The result is unobservable, so the compiler deleted the loop (dead code elimination); it may also have computed `sum` at compile time
+- [ ] `clock::now()` is only precise to milliseconds
+
+> Optimizers operate under the as-if rule: any transformation preserving observable behavior is legal. A `sum` that nothing reads has no observable effect, so -O2 removes the loop entirely — and even if `sum` were read, a loop over constants can be folded to a single precomputed value. Vectorization would still leave microseconds of measurable work. Benchmarks must force observability: use the result, or `benchmark::DoNotOptimize(sum)`.
+
+## quiz: A zeroed 4 MB array vs an initialized one — where do the bytes live?
+tags: toolchain, compiler, object-files
+track: core
+
+```cpp
+int zeros[1'000'000];              // global, zero-initialized
+int ones[1'000'000] = {1, 1, 1};   // global, explicitly initialized
+```
+
+- [ ] Both add ~4 MB each to the executable file
+- [x] `zeros` goes in .bss (recorded as just a size, no file bytes); `ones` goes in .data and stores ~4 MB in the file
+- [ ] Both are stored compressed in .rodata
+- [ ] `zeros` is placed in .text so the loader can generate it
+
+> .data holds globals with nonzero initial values and must store them byte-for-byte in the binary. .bss holds zero-initialized (and uninitialized) globals as metadata only — a size — and the loader zero-fills that region at startup for free. So `zeros` costs nothing on disk while `ones` costs the full 4 MB (a nonzero element anywhere disqualifies it from .bss). .rodata is for constants like string literals; .text is code.
+
+## quiz: app can't find json.hpp, but core links fine — what's the right fix?
+tags: toolchain, cmake, propagation
+track: core
+
+`core.h` (a public header of `core`) does `#include <nlohmann/json.hpp>`. The project has:
+
+```cmake
+target_link_libraries(core PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(app PRIVATE core)
+# app's compile of main.cpp fails: 'nlohmann/json.hpp' file not found
+```
+
+- [ ] Add the JSON include directory to `app` with `target_include_directories`
+- [x] Change the scope: `target_link_libraries(core PUBLIC nlohmann_json::nlohmann_json)`
+- [ ] Also link json into app: `target_link_libraries(app PRIVATE nlohmann_json::nlohmann_json)`
+- [ ] Change `app`'s link to `INTERFACE`: `target_link_libraries(app INTERFACE core)`
+
+> PRIVATE declares "only core's implementation uses this" — so the dependency's usage requirements (its include dirs) don't propagate to core's consumers. But core's *public header* mentions json, meaning every consumer needs it: that is precisely PUBLIC. Hand-adding include paths to app, or making app link json directly, patches this one consumer and breaks again for the next; it also lies about the dependency graph. The rule: appears in your public headers → PUBLIC; implementation-only → PRIVATE.
+
+## quiz: find_package vs FetchContent — which statement is true?
+tags: toolchain, cmake, dependencies
+track: core
+
+- [ ] find_package downloads the library's source at configure time; FetchContent locates an installed copy
+- [x] find_package consumes a dependency already installed on the system; FetchContent downloads the source at configure time and builds it inside your build tree
+- [ ] FetchContent can only fetch header-only libraries
+- [ ] find_package and FetchContent cannot produce the same imported targets
+
+> find_package locates something provisioned beforehand (system package, vcpkg/conan, manual install) via its Config file or a Find module — fast builds, but the machine must be set up. FetchContent removes the provisioning step: it downloads a pinned tag and `add_subdirectory`s it, so a clean clone builds with zero system state, at the cost of compiling the dependency yourself. Any library with well-behaved CMake works, not just header-only — and both routes typically expose identical targets like `fmt::fmt`, which is what makes hybrid setups (FIND_PACKAGE_ARGS fallback) seamless.
+
+## quiz: A pointer into a vector goes bad after push_back — which sanitizer?
+tags: toolchain, sanitizers
+track: core
+
+Your tests intermittently read garbage through a `Order*` that points into a `std::vector<Order>`; you suspect a reallocation freed the old buffer. Which tool reports this directly, with the stack traces of the bad read, the free, and the original allocation?
+
+- [x] AddressSanitizer (-fsanitize=address)
+- [ ] ThreadSanitizer (-fsanitize=thread)
+- [ ] UndefinedBehaviorSanitizer (-fsanitize=undefined)
+- [ ] MemorySanitizer (-fsanitize=memory)
+
+> Reading through a pointer into a freed heap block is heap-use-after-free — ASan's home turf. It quarantines freed memory and poisons red zones, so the bad read aborts immediately with three stacks: where you read, where the buffer was freed (the reallocation), and where it was allocated. TSan finds races between threads; UBSan finds language-rule violations like signed overflow; MSan finds reads of *uninitialized* (never-written) memory, which is a different bug than use-after-free.
+
+## quiz: Two threads increment a counter and the total comes up short — which sanitizer?
+tags: toolchain, sanitizers
+track: core
+
+A stats counter incremented from two threads without synchronization occasionally ends below the expected total. It never crashes. Which tool identifies the root cause, naming both racing stacks?
+
+- [ ] AddressSanitizer (-fsanitize=address)
+- [ ] UndefinedBehaviorSanitizer (-fsanitize=undefined)
+- [x] ThreadSanitizer (-fsanitize=thread)
+- [ ] MemorySanitizer (-fsanitize=memory)
+
+> Unsynchronized read-modify-write from two threads is a data race — undefined behavior even when it "only" drops updates. TSan instruments every memory access, tracks the happens-before graph, and reports the two conflicting stacks plus the threads' identities, catching races even on runs where the corruption didn't happen to manifest. ASan sees no invalid address here (the counter is valid memory), and UBSan's checks don't include cross-thread synchronization. Remember TSan runs alone: it cannot be combined with ASan or MSan, and expect 5-15x slowdown.
+
+## quiz: Tick math goes weird only in release builds at large values — which sanitizer?
+tags: toolchain, sanitizers
+track: core
+
+`int position_value = price_ticks * quantity;` produces bizarre negative numbers in production for large positions, but debug builds "work". Which tool pinpoints the exact line and values?
+
+- [ ] AddressSanitizer (-fsanitize=address)
+- [ ] ThreadSanitizer (-fsanitize=thread)
+- [x] UndefinedBehaviorSanitizer (-fsanitize=undefined)
+- [ ] MemorySanitizer (-fsanitize=memory)
+
+> Signed integer overflow is undefined behavior — the optimizer may assume it never happens, which is exactly why symptoms appear at -O2 and not in debug builds. UBSan instruments the arithmetic and prints `runtime error: signed integer overflow: 2000000000 * 2 cannot be represented in type 'int'` with file and line. No invalid memory is touched, so ASan is silent; no threads are involved, so TSan is irrelevant; the operands are fully initialized, so MSan has nothing to say. UBSan is cheap enough to leave on in every test build.
+
+## quiz: Which Python function produced this disassembly?
+tags: toolchain, interpreter, dis
+track: python
+
+```text
+LOAD_CONST               0 ('hello ')
+LOAD_FAST_BORROW         0 (name)
+BINARY_OP                0 (+)
+STORE_FAST               1 (msg)
+LOAD_FAST_BORROW         1 (msg)
+RETURN_VALUE
+```
+
+- [ ] `def f(name): return 'hello ' + name`
+- [x] `def f(name): msg = 'hello ' + name; return msg`
+- [ ] `def f(name): return GREETING + name`
+- [ ] `def f(name): return f'hello {name}'`
+
+> Read it as stack traffic: push the constant `'hello '`, push the parameter (`LOAD_FAST_BORROW` is 3.14's variant of `LOAD_FAST` — locals are indexed slots), `BINARY_OP (+)` pops both and pushes the result. The giveaway is `STORE_FAST`/`LOAD_FAST` on `msg`: the result lands in a local and is loaded back — so a temporary variable exists. Returning the expression directly would go straight to `RETURN_VALUE`; a module-level `GREETING` would use `LOAD_GLOBAL`; an f-string compiles to `FORMAT_SIMPLE`/`BUILD_STRING` instructions, not `BINARY_OP`.
+
+## quiz: You edit mymod.py while a stale .pyc sits in __pycache__ — what runs?
+tags: toolchain, interpreter, pyc
+track: python
+
+`__pycache__/mymod.cpython-314.pyc` was compiled from yesterday's source. You save changes to `mymod.py` and run `python -c "import mymod"`.
+
+- [ ] The stale bytecode runs; you must delete __pycache__ to pick up edits
+- [ ] Python raises ImportError because the cache and source disagree
+- [x] Python compares the source's mtime and size against values stored in the .pyc header, sees a mismatch, recompiles, and rewrites the cache
+- [ ] The .pyc is only refreshed when the CPython version changes
+
+> The 16-byte .pyc header stores a magic number (bytecode format version) plus the source's mtime and size (or, in PEP 552 hash-based mode, a hash of the source). On import, a mismatch triggers silent recompilation and the cache is rewritten — so stale-bytecode bugs essentially don't happen through normal edits. The magic number handles the version case: a .pyc from a different CPython is ignored entirely, which is why the interpreter version is baked into the filename. Deleting __pycache__ is always safe, merely slower.
+
+## quiz: 8 seconds of pure-Python math, 4 threads, 8 cores — how long?
+tags: toolchain, interpreter, gil
+track: python
+
+A CPU-bound pure-Python function takes 8s single-threaded. You split the work evenly across 4 `threading.Thread`s on an 8-core machine (standard CPython). Expected wall time?
+
+- [ ] ~2s — four threads on eight cores
+- [ ] ~4s — the GIL allows two threads to run concurrently
+- [x] ~8s, possibly slightly worse than single-threaded
+- [ ] ~2s, but only if the threads are created before the work starts
+
+> The GIL is one mutex that a thread must hold to execute Python bytecode, so CPU-bound pure-Python threads run strictly one at a time — the work is serialized regardless of core count, and GIL handoffs every 5ms (`sys.getswitchinterval()`) plus cache churn often make it slightly *slower* than one thread. Threads do help when the GIL is released: blocking I/O and long-running C-extension work (NumPy kernels). For CPU-bound pure Python, use `multiprocessing` — one interpreter and GIL per process — or the experimental free-threaded build (3.13+).
