@@ -3987,6 +3987,548 @@
      ]
     }
    ]
+  },
+  {
+   "id": "python",
+   "name": "Python Mastery",
+   "icon": "🐍",
+   "nodes": [
+    {
+     "id": "syntax-and-types",
+     "name": "Syntax & Types",
+     "blurb": "Python's core semantics: dynamic typing, truthiness, operators, and the runtime errors that catch newcomers off guard.",
+     "tier": 0,
+     "track": "python",
+     "prereqs": [],
+     "cardTags": [
+      "types",
+      "errors",
+      "truthiness",
+      "booleans",
+      "operators",
+      "gotcha"
+     ],
+     "problems": []
+    },
+    {
+     "id": "collections",
+     "name": "Lists, Dicts & Sets",
+     "blurb": "The built-in workhorses: mutability, hashability, aliasing vs copying, and when to reach for a list, dict, set, or tuple.",
+     "tier": 0,
+     "track": "python",
+     "prereqs": [],
+     "cardTags": [
+      "lists",
+      "dicts",
+      "sets",
+      "tuples",
+      "data-structures",
+      "copying",
+      "aliasing"
+     ],
+     "problems": []
+    },
+    {
+     "id": "comprehensions",
+     "name": "Comprehensions & Slicing",
+     "blurb": "Transform and reshape data in one expressive line: list/dict/set comprehensions, slice tricks, zip, and unpacking.",
+     "tier": 1,
+     "track": "python",
+     "prereqs": [
+      "collections"
+     ],
+     "cardTags": [
+      "comprehension",
+      "comprehensions",
+      "slicing",
+      "nested-list",
+      "zip",
+      "unpacking"
+     ],
+     "problems": [
+      {
+       "name": "Flatten a Nested List",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Chunk a List",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Transpose a Matrix",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Sliding Windows",
+       "difficulty": "medium",
+       "playable": true
+      }
+     ]
+    },
+    {
+     "id": "functions-and-closures",
+     "name": "Functions & Closures",
+     "blurb": "How Python binds names: default-argument evaluation, closures and late binding, scope rules (LEGB), and lambdas.",
+     "tier": 1,
+     "track": "python",
+     "prereqs": [
+      "syntax-and-types"
+     ],
+     "cardTags": [
+      "functions",
+      "closures",
+      "scope",
+      "lambda",
+      "mutable-default"
+     ],
+     "problems": []
+    },
+    {
+     "id": "strings",
+     "name": "Strings",
+     "blurb": "Immutable text done right: string methods return new objects, f-strings format anything, and interning is an implementation detail.",
+     "tier": 1,
+     "track": "python",
+     "prereqs": [
+      "syntax-and-types"
+     ],
+     "cardTags": [
+      "string",
+      "strings",
+      "f-strings"
+     ],
+     "problems": []
+    },
+    {
+     "id": "iterators-generators",
+     "name": "Iterators & Generators",
+     "blurb": "Lazy evaluation with the iterator protocol: generators that compute on demand, single-pass exhaustion, and yield semantics.",
+     "tier": 2,
+     "track": "python",
+     "prereqs": [
+      "comprehensions",
+      "functions-and-closures"
+     ],
+     "cardTags": [
+      "iterators",
+      "generators",
+      "laziness",
+      "iteration"
+     ],
+     "problems": []
+    },
+    {
+     "id": "collections-module",
+     "name": "The collections Module",
+     "blurb": "Counter, defaultdict, and deque replace hand-rolled counting, grouping, and queue code with one import.",
+     "tier": 2,
+     "track": "python",
+     "prereqs": [
+      "collections"
+     ],
+     "cardTags": [
+      "collections",
+      "counter",
+      "defaultdict",
+      "dict",
+      "ordering"
+     ],
+     "problems": [
+      {
+       "name": "Dedupe Preserving Order",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Top-K Most Common",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Invert a Dict",
+       "difficulty": "medium",
+       "playable": true
+      }
+     ]
+    },
+    {
+     "id": "itertools-functools",
+     "name": "itertools & functools",
+     "blurb": "The functional toolkit: accumulate running totals, memoize with lru_cache, and compose iterator pipelines without loops.",
+     "tier": 2,
+     "track": "python",
+     "prereqs": [
+      "comprehensions",
+      "functions-and-closures"
+     ],
+     "cardTags": [
+      "itertools",
+      "functools",
+      "accumulate",
+      "memoization",
+      "decorators"
+     ],
+     "problems": [
+      {
+       "name": "Running Sum",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Memoize with lru_cache",
+       "difficulty": "hard",
+       "playable": true
+      }
+     ]
+    },
+    {
+     "id": "sorting-idioms",
+     "name": "Sorting Idioms",
+     "blurb": "sorted() with key functions: computed keys, stable tie-breaking, reverse pitfalls, and natural ordering with tuple keys.",
+     "tier": 2,
+     "track": "python",
+     "prereqs": [
+      "functions-and-closures"
+     ],
+     "cardTags": [
+      "sorting",
+      "sorting-key",
+      "stability",
+      "ordering"
+     ],
+     "problems": [
+      {
+       "name": "Sort by Computed Key",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Natural Sort Order",
+       "difficulty": "hard",
+       "playable": true
+      }
+     ]
+    },
+    {
+     "id": "error-handling",
+     "name": "Errors & Exceptions",
+     "blurb": "EAFP over LBYL: precise except clauses, try/else/finally flow, and context managers that guarantee cleanup.",
+     "tier": 2,
+     "track": "python",
+     "prereqs": [
+      "functions-and-closures"
+     ],
+     "cardTags": [
+      "exceptions",
+      "errors",
+      "context-managers",
+      "resources"
+     ],
+     "problems": []
+    },
+    {
+     "id": "arrays-hashing-py",
+     "name": "Arrays & Hashing",
+     "blurb": "Dicts and sets give O(1) membership and counting — the Pythonic foundation for most interview array problems.",
+     "tier": 3,
+     "track": "python",
+     "prereqs": [
+      "collections-module"
+     ],
+     "cardTags": [
+      "array",
+      "hash-table"
+     ],
+     "problems": [
+      {
+       "name": "Two Sum",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Contains Duplicate",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Valid Anagram",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Group Anagrams",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Product of Array Except Self",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Longest Consecutive Sequence",
+       "difficulty": "hard",
+       "playable": true
+      }
+     ]
+    },
+    {
+     "id": "two-pointers-py",
+     "name": "Two Pointers & Sliding Window",
+     "blurb": "Converging indices and elastic windows in idiomatic Python — while loops over sorted data instead of nested scans.",
+     "tier": 3,
+     "track": "python",
+     "prereqs": [
+      "sorting-idioms",
+      "strings"
+     ],
+     "cardTags": [
+      "two-pointers",
+      "array",
+      "sliding-window"
+     ],
+     "problems": [
+      {
+       "name": "Valid Palindrome",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Two Sum II - Input Array Is Sorted",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Container With Most Water",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "3Sum",
+       "difficulty": "hard",
+       "playable": true
+      },
+      {
+       "name": "Longest Substring Without Repeating Characters",
+       "difficulty": "hard",
+       "playable": true
+      }
+     ]
+    },
+    {
+     "id": "stack-py",
+     "name": "Stacks",
+     "blurb": "A plain list is Python's stack: append/pop for matching brackets, and monotonic stacks for next-greater scans.",
+     "tier": 3,
+     "track": "python",
+     "prereqs": [
+      "collections-module"
+     ],
+     "cardTags": [
+      "stack",
+      "monotonic-stack"
+     ],
+     "problems": [
+      {
+       "name": "Valid Parentheses",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Daily Temperatures",
+       "difficulty": "medium",
+       "playable": true
+      }
+     ]
+    },
+    {
+     "id": "code-review-py",
+     "name": "Code Review: Spot the Bug",
+     "blurb": "Read real broken Python and fix it: off-by-ones, aliasing leaks, late-binding closures, float traps, and swallowed exceptions.",
+     "tier": 3,
+     "track": "python",
+     "prereqs": [
+      "error-handling"
+     ],
+     "cardTags": [
+      "code-review",
+      "debugging"
+     ],
+     "problems": [
+      {
+       "name": "fix: Last page never prints",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "fix: Defaults drift after every request",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "fix: Dedupe remembers too much",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "fix: Every currency converts at the yen rate",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "fix: Version 1.10 releases before 1.9",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "fix: Ten dimes don't make a dollar",
+       "difficulty": "hard",
+       "playable": true
+      }
+     ]
+    },
+    {
+     "id": "trees-graphs-py",
+     "name": "Trees & Graphs",
+     "blurb": "Recursion for DFS, deque for BFS: traverse binary trees, flood-fill grids, and order dependencies topologically.",
+     "tier": 4,
+     "track": "python",
+     "prereqs": [
+      "stack-py",
+      "arrays-hashing-py"
+     ],
+     "cardTags": [
+      "tree",
+      "binary-tree",
+      "graph",
+      "dfs",
+      "bfs",
+      "binary-search-tree"
+     ],
+     "problems": [
+      {
+       "name": "Invert Binary Tree",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Maximum Depth of Binary Tree",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Binary Tree Level Order Traversal",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Validate Binary Search Tree",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Number of Islands",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Course Schedule",
+       "difficulty": "medium",
+       "playable": true
+      }
+     ]
+    },
+    {
+     "id": "dp-backtracking-py",
+     "name": "DP & Backtracking",
+     "blurb": "Memoize recursion with lru_cache or tabulate bottom-up; backtrack by choosing, recursing, and un-choosing.",
+     "tier": 4,
+     "track": "python",
+     "prereqs": [
+      "arrays-hashing-py",
+      "itertools-functools"
+     ],
+     "cardTags": [
+      "dynamic-programming",
+      "backtracking",
+      "memoization",
+      "recursion"
+     ],
+     "problems": [
+      {
+       "name": "Climbing Stairs",
+       "difficulty": "easy",
+       "playable": true
+      },
+      {
+       "name": "Best Time to Buy and Sell Stock",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "House Robber",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Coin Change",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Word Break",
+       "difficulty": "hard",
+       "playable": true
+      },
+      {
+       "name": "Combination Sum",
+       "difficulty": "hard",
+       "playable": true
+      }
+     ]
+    },
+    {
+     "id": "binary-search-heap-py",
+     "name": "Binary Search & Heaps",
+     "blurb": "bisect the sorted (or the answer space) and let heapq keep the top-K: logarithmic tools for selection and search.",
+     "tier": 4,
+     "track": "python",
+     "prereqs": [
+      "two-pointers-py",
+      "arrays-hashing-py"
+     ],
+     "cardTags": [
+      "binary-search",
+      "heap",
+      "quickselect"
+     ],
+     "problems": [
+      {
+       "name": "Kth Largest Element in an Array",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Top K Frequent Elements",
+       "difficulty": "medium",
+       "playable": true
+      },
+      {
+       "name": "Search in Rotated Sorted Array",
+       "difficulty": "hard",
+       "playable": true
+      },
+      {
+       "name": "Koko Eating Bananas",
+       "difficulty": "hard",
+       "playable": true
+      }
+     ]
+    }
+   ]
   }
  ]
 }

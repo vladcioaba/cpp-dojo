@@ -770,6 +770,1561 @@ int main() {
 
 **Editorial:** The move constructor transfers ownership by copying the pointer and size, then resetting the source (`data = nullptr`) so its destructor will not double-free. Marking it `noexcept` lets containers move instead of copy when they reallocate. The drill teaches move semantics and the leave-the-source-valid rule. O(1).
 
+## quiz: Does std::max(1, 2.5) compile?
+tags: compilation, templates, deduction
+track: core
+difficulty: easy
+
+A helper picks the larger of two numbers of different types.
+
+```cpp
+#include <algorithm>
+int main() {
+    int small = 1;
+    double big = 2.5;
+    return std::max(small, big);
+}
+```
+
+- [ ] Compiles and returns 2
+- [ ] Compiles; the int is promoted to double before the call
+- [x] Compile error: template argument deduction fails
+- [ ] Compiles, but comparing int and double is undefined behavior
+
+> `std::max` is `template <class T> const T& max(const T&, const T&)`. Deduction from the first argument says `T = int`, from the second `T = double` — conflicting deductions make the call ill-formed. Deduction must produce one consistent `T` before any conversions are considered. Fix: `std::max<double>(small, big)` or cast one argument.
+
+## quiz: Dependent type without typename
+tags: compilation, templates, typename
+track: core
+difficulty: medium
+
+A generic function grabs an iterator to the first element.
+
+```cpp
+#include <vector>
+template <typename C>
+void first_of(const C& c) {
+    C::const_iterator it = c.begin();
+    (void)it;
+}
+int main() { std::vector<int> v{1}; first_of(v); }
+```
+
+- [x] Compile error: `C::const_iterator` needs `typename`
+- [ ] Compiles and runs fine
+- [ ] Compile error: `std::vector<int>` has no `const_iterator`
+- [ ] Compiles, but only when called with a non-const container
+
+> `C::const_iterator` is a dependent name, and in a block-scope declaration the compiler must be told it names a type: `typename C::const_iterator it = ...`. C++20 dropped the `typename` requirement in a few contexts where only a type is grammatically possible (return types, member declarations), but a declaration inside a function body is not one of them.
+
+## quiz: Same inline function defined twice in one file
+tags: compilation, odr, inline
+track: core
+difficulty: medium
+
+The same inline function appears twice, token for token.
+
+```cpp
+inline int answer() { return 42; }
+inline int answer() { return 42; }
+int main() { return answer(); }
+```
+
+- [ ] Compiles: inline allows repeated identical definitions
+- [x] Compile error: redefinition within one translation unit
+- [ ] Compiles, but which definition is used is unspecified
+- [ ] Links, but with undefined behavior
+
+> `inline` relaxes the one-definition rule *across* translation units — each TU that uses the function must contain its own identical definition. Within a single translation unit the normal rule still applies: one definition only, so the second one is a plain redefinition error.
+
+## quiz: int argument, long and double overloads
+tags: compilation, overloading, conversions
+track: core
+difficulty: easy
+
+Two overloads exist; the caller passes a plain int.
+
+```cpp
+#include <iostream>
+void report(long x)   { std::cout << "long"; }
+void report(double x) { std::cout << "double"; }
+int main() { report(7); }
+```
+
+- [ ] Prints long: the integral overload is preferred
+- [ ] Prints double
+- [x] Compile error: the call is ambiguous
+- [ ] Prints long: it is declared first
+
+> `int → long` and `int → double` are both conversion-rank standard conversions (`int → long` is a conversion, not a promotion — only e.g. `short`/`char → int` are promotions). Neither overload is better than the other, so overload resolution fails and the call is ill-formed. Declaration order never breaks ties.
+
+## quiz: String literal vs a bool overload
+tags: conversions, overloading
+track: core
+difficulty: medium
+
+A logging helper is overloaded for messages and for flags.
+
+```cpp
+#include <iostream>
+#include <string>
+void log_msg(const std::string& s) { std::cout << "string"; }
+void log_msg(bool b)               { std::cout << "bool"; }
+int main() { log_msg("disk full"); }
+```
+
+- [ ] Prints string
+- [x] Prints bool
+- [ ] Compile error: the call is ambiguous
+- [ ] Compile error: a string literal cannot convert to bool
+
+> `const char*` → `bool` is a standard conversion (pointer to bool), while `const char*` → `std::string` needs a user-defined conversion. Standard conversions always outrank user-defined ones in overload resolution, so the `bool` overload wins silently. This is a real API-design trap: never overload on `bool` next to string-like parameters.
+
+## quiz: Pass-by-value with a deleted copy constructor
+tags: compilation, special-members
+track: core
+difficulty: easy
+
+Socket forbids copying; transmit takes it by value.
+
+```cpp
+struct Socket {
+    Socket() = default;
+    Socket(const Socket&) = delete;
+};
+void transmit(Socket s) {}
+int main() {
+    Socket s;
+    transmit(s);
+}
+```
+
+- [x] Compile error at the call `transmit(s)`
+- [ ] Compiles: pass-by-value falls back to the move constructor
+- [ ] Compile error at the definition of `transmit`
+- [ ] Compiles, but s is left in a moved-from state
+
+> Passing an lvalue by value copy-initializes the parameter, which selects the copy constructor. Deleted functions still participate in overload resolution — being chosen is what makes the program ill-formed, at the call site. Declaring the copy constructor (even as deleted) also suppresses the implicit move constructor, so there is no move fallback; the function definition itself is fine.
+
+## quiz: Returning a reference to a local
+tags: ub, lifetime, references
+track: core
+difficulty: medium
+
+biggest returns a reference to avoid a copy.
+
+```cpp
+int& biggest(int a, int b) {
+    int result = a > b ? a : b;
+    return result;
+}
+int main() {
+    int& r = biggest(1, 2);
+    return r;
+}
+```
+
+- [ ] Compile error: a local cannot be returned by reference
+- [ ] Compiles and reliably returns 2
+- [x] Compiles, but reading r is undefined behavior
+- [ ] Compiles; the reference keeps result alive
+
+> `result` dies when `biggest` returns, so the returned reference dangles. The language still accepts the code — compilers emit at most a warning — and the UB happens when `r` is read in `main`. Lifetime extension applies only to temporaries bound directly to references, never through a `return`; return by value here.
+
+## quiz: constexpr division by zero
+tags: compilation, constexpr, ub
+track: core
+difficulty: medium
+
+A constexpr helper is asked to divide by zero at compile time.
+
+```cpp
+constexpr int safe_div(int a, int b) { return a / b; }
+int main() {
+    constexpr int x = safe_div(10, 0);
+    return x;
+}
+```
+
+- [ ] Compiles; x is 0
+- [ ] Compiles, but crashes at run time
+- [x] Compile error: the initializer is not a constant expression
+- [ ] Undefined behavior at run time
+
+> Constant evaluation is not allowed to encounter undefined behavior. `constexpr int x` forces compile-time evaluation of `safe_div(10, 0)`, and the division by zero disqualifies it as a constant expression, so the program is ill-formed. The same call stored in a plain `int` would compile — and be UB at run time. constexpr turns a class of UB into diagnostics.
+
+## quiz: Three names for a two-element pair
+tags: compilation, structured-bindings
+track: core
+difficulty: medium
+
+A pair is decomposed with a structured binding.
+
+```cpp
+#include <utility>
+int main() {
+    std::pair<int, int> p{1, 2};
+    auto [x, y, z] = p;
+    return x + y + z;
+}
+```
+
+- [ ] Compiles; z is value-initialized to 0
+- [x] Compile error: the name count must match the element count exactly
+- [ ] Compiles; z aliases y
+- [ ] Compile error: std::pair does not support structured bindings
+
+> A structured binding must introduce exactly as many names as the type decomposes into — `std::tuple_size<std::pair<int,int>>::value` is 2, and three names is ill-formed. There is no padding, defaulting, or truncation. (C++26 adds `_` placeholders for *ignoring* elements, but never for inventing extra ones.)
+
+## quiz: Lambda reads a local it never captured
+tags: compilation, lambdas
+track: core
+difficulty: easy
+
+A predicate lambda uses a local variable with an empty capture list.
+
+```cpp
+int main() {
+    int limit = 10;
+    auto over = [](int x) { return x > limit; };
+    return over(5);
+}
+```
+
+- [x] Compile error: limit is not captured
+- [ ] Compiles; locals are captured by value automatically
+- [ ] Compiles; lambdas may read (but not write) enclosing locals
+- [ ] Compiles, but reads an indeterminate value
+
+> A lambda body may only name local variables of automatic storage duration that it captures — explicitly (`[limit]`) or via a capture-default (`[=]`, `[&]`). An empty `[]` captures nothing, so `limit` is not reachable and the program is ill-formed. Globals, statics, and constant expressions are usable without capture; plain locals are not.
+
+## quiz: Braced init from a double expression
+tags: compilation, initialization, narrowing
+track: core
+difficulty: easy
+
+A percentage is computed and stored via list-initialization.
+
+```cpp
+int main() {
+    double ratio = 0.5;
+    int percent{ratio * 100};
+    return percent;
+}
+```
+
+- [ ] Compiles; percent is 50
+- [x] Compile error: narrowing conversion in braced initialization
+- [ ] Compiles, truncating only if the value does not fit in int
+- [ ] Compiles; braces behave exactly like = here
+
+> List-initialization forbids narrowing conversions, and `double → int` narrows unless the value is a constant expression provably representable — `ratio * 100` is a runtime value, so it is ill-formed. `int percent = ratio * 100;` would compile and silently truncate. Turning that silent truncation into an error is precisely what braces are for.
+
+## quiz: Non-const call through a const reference
+tags: compilation, const
+track: core
+difficulty: easy
+
+inspect takes the counter by const reference — and pokes it.
+
+```cpp
+struct Counter {
+    int n = 0;
+    void bump() { ++n; }
+};
+void inspect(const Counter& c) { c.bump(); }
+int main() { Counter c; inspect(c); }
+```
+
+- [x] Compile error: bump() is not a const member function
+- [ ] Compiles; const on a reference parameter is advisory
+- [ ] Compiles; members of a local struct are mutable by default
+- [ ] Compile error: a const object cannot be passed by reference
+
+> Through a `const Counter&`, only `const` member functions may be called; `bump()` is non-const because it modifies `n`, so the call is ill-formed. The `this` pointer inside a const call is `const Counter*`, and the compiler enforces it. The fixes — non-const parameter, or `mutable n` — are each a different design statement, which is why const-correctness propagates through APIs.
+
+## quiz: Virtual function, different default arguments
+tags: virtual, default-arguments
+track: core
+difficulty: hard
+
+Base and Derived both default the who parameter — differently.
+
+```cpp
+#include <iostream>
+struct Base {
+    virtual void greet(const char* who = "Base") { std::cout << "Base::" << who; }
+};
+struct Derived : Base {
+    void greet(const char* who = "Derived") override { std::cout << "Derived::" << who; }
+};
+int main() { Derived d; Base* p = &d; p->greet(); }
+```
+
+- [ ] Prints Derived::Derived
+- [x] Prints Derived::Base
+- [ ] Prints Base::Base
+- [ ] Compile error: an override cannot change a default argument
+
+> Two mechanisms fire at different times: which function runs is decided at run time from the dynamic type (`Derived::greet`), but the default argument is substituted at compile time from the static type of the call expression (`Base*`, so `"Base"`). The mismatch `Derived::Base` is why style guides ban default arguments on virtual functions.
+
+## quiz: Derived object passed by value as Base
+tags: slicing, inheritance
+track: core
+difficulty: easy
+
+print takes the shape by value.
+
+```cpp
+#include <iostream>
+struct Shape  { virtual const char* name() const { return "Shape"; } };
+struct Circle : Shape { const char* name() const override { return "Circle"; } };
+void print(Shape s) { std::cout << s.name(); }
+int main() { Circle c; print(c); }
+```
+
+- [ ] Prints Circle
+- [x] Prints Shape
+- [ ] Compile error: a Circle cannot initialize a Shape parameter
+- [ ] Undefined behavior: the vtable pointer is corrupted
+
+> Copy-initializing the `Shape` parameter from a `Circle` slices the object: only the `Shape` subobject is copied, and the parameter's dynamic type is exactly `Shape`. Virtual dispatch then works flawlessly — and correctly calls `Shape::name`. Polymorphism survives only through references and pointers; pass `const Shape&` instead.
+
+## quiz: std::move on a const string
+tags: move, const
+track: core
+difficulty: medium
+
+The source string is const; the code tries to move from it.
+
+```cpp
+#include <iostream>
+#include <string>
+#include <utility>
+int main() {
+    const std::string src = "hello";
+    std::string dst = std::move(src);
+    std::cout << src;
+}
+```
+
+- [ ] Prints nothing: src was moved out
+- [ ] Compile error: a const object cannot be moved from
+- [x] Prints hello: the "move" silently degrades to a copy
+- [ ] Undefined behavior: reading a moved-from string
+
+> `std::move(src)` yields `const std::string&&`, which cannot bind to the move constructor's `std::string&&` parameter (moving mutates the source). It binds happily to the copy constructor's `const std::string&`, so overload resolution silently picks the copy. It compiles, works, and leaves `src` untouched — a classic hidden pessimization worth a compiler-explorer check in hot paths.
+
+## quiz: Flowing off the end of a non-void function
+tags: ub, compilation
+track: core
+difficulty: medium
+
+sign handles positive and negative — and forgets zero.
+
+```cpp
+int sign(int x) {
+    if (x > 0) return 1;
+    if (x < 0) return -1;
+}
+int main() { return sign(0); }
+```
+
+- [ ] Compile error: not all control paths return a value
+- [ ] Compiles; sign(0) returns 0
+- [x] Compiles (a warning at most); calling sign(0) is undefined behavior
+- [ ] Compiles; sign(0) returns an unspecified but valid int
+
+> Flowing off the end of a value-returning function is undefined behavior at the moment it happens — the standard does not require rejecting the code, so compilers only warn (`-Wreturn-type`). It is not merely "a garbage value": optimizers may assume the path is unreachable and delete the comparison logic around it. Only `main` is special, with an implicit `return 0;`.
+
+## quiz: Incrementing unsigned max
+tags: ub, integers
+track: core
+difficulty: medium
+
+An unsigned counter sitting at its maximum value gets bumped once.
+
+```cpp
+#include <iostream>
+#include <limits>
+int main() {
+    unsigned u = std::numeric_limits<unsigned>::max();
+    ++u;
+    std::cout << u;
+}
+```
+
+- [ ] Undefined behavior: integer overflow
+- [x] Prints 0: unsigned arithmetic wraps, guaranteed
+- [ ] Prints -1
+- [ ] Implementation-defined result
+
+> Unsigned arithmetic is defined as modulo 2^N, so max + 1 is exactly 0 on every conforming implementation — this is not overflow at all in standard terms. It is *signed* overflow (`INT_MAX + 1`) that is undefined behavior. The asymmetry cuts both ways: unsigned loop indices never trip UB sanitizers, they just silently wrap — which is its own class of bug.
+
+## quiz: push_back inside a range-for
+tags: ub, iterators, containers
+track: core
+difficulty: medium
+
+The loop appends to the very vector it is iterating.
+
+```cpp
+#include <vector>
+int main() {
+    std::vector<int> v{1, 2, 3};
+    for (int x : v)
+        if (x == 2) v.push_back(99);
+}
+```
+
+- [ ] Compile error: the range is const inside a range-for
+- [x] Compiles, but is undefined behavior
+- [ ] Compiles; the loop also visits the appended 99
+- [ ] Compiles and always terminates after exactly three iterations
+
+> Range-for computes `begin()` and `end()` once, before the first iteration. `push_back` may reallocate, invalidating both iterators; even without reallocation the cached `end()` is stale. Incrementing or dereferencing an invalidated iterator is UB — and the fact that it usually "seems to work" on small vectors is exactly what makes it dangerous.
+
+## quiz: auto grabs vector<bool>'s proxy
+tags: auto, proxy-types, containers
+track: core
+difficulty: hard
+
+A flag is "saved" into a local, then the vector is changed.
+
+```cpp
+#include <iostream>
+#include <vector>
+int main() {
+    std::vector<bool> flags{true, true};
+    auto first = flags[0];
+    flags[0] = false;
+    std::cout << first;
+}
+```
+
+- [ ] Prints 1: first holds a copy of the bool
+- [x] Prints 0: first is a proxy still referring into the vector
+- [ ] Compile error: auto cannot deduce vector<bool>::reference
+- [ ] Undefined behavior
+
+> `std::vector<bool>` is bit-packed, so `operator[]` returns a proxy class — not `bool&` and not `bool`. `auto` faithfully deduces that proxy type, so `first` still refers to bit 0 and observes the later write, printing 0. Write `bool first = flags[0];` to force a real copy. Any proxy-returning API (expression templates, bitfields wrappers) breaks naive `auto` the same way.
+
+## quiz: Derived overload hides the base one
+tags: compilation, name-hiding, overloading
+track: core
+difficulty: medium
+
+Base has show(int); Derived adds show(const char*); the call passes 42.
+
+```cpp
+#include <iostream>
+struct Base    { void show(int) { std::cout << "int"; } };
+struct Derived : Base { void show(const char*) { std::cout << "cstr"; } };
+int main() {
+    Derived d;
+    d.show(42);
+}
+```
+
+- [x] Compile error: Base::show is hidden and 42 won't convert to const char*
+- [ ] Prints int: overload resolution merges both scopes
+- [ ] Prints cstr: 42 converts to a null pointer
+- [ ] Compile error: overloading across class scopes is ambiguous
+
+> Name lookup stops at the first scope where the name is found: `Derived::show` hides *every* `Base::show`, so only `show(const char*)` is a candidate — and `42` (a non-literal-zero int expression aside, since C++11 no int converts implicitly to a pointer) has no viable conversion. Overload resolution never merges base and derived scopes. `using Base::show;` inside Derived un-hides the base overloads.
+
+## quiz: Timer t(); — what did you just declare?
+tags: compilation, parsing
+track: core
+difficulty: medium
+
+The programmer "default-constructs" a timer with empty parentheses.
+
+```cpp
+#include <iostream>
+struct Timer { int elapsed() const { return 0; } };
+int main() {
+    Timer t();
+    std::cout << t.elapsed();
+}
+```
+
+- [ ] Compiles and prints 0
+- [x] Compile error: t is a function declaration, not an object
+- [ ] Compiles; t is value-initialized
+- [ ] Compile error: Timer has no user-provided default constructor
+
+> This is the most vexing parse: anything that *can* be parsed as a declaration *is* one, so `Timer t();` declares a function `t` taking nothing and returning `Timer`. The error only surfaces at `t.elapsed()` — member access on a function is ill-formed. `Timer t;` or `Timer t{};` (braces can never declare a function) say what was meant.
+
+## quiz: Copy-init through an explicit constructor
+tags: compilation, conversions, explicit
+track: core
+difficulty: easy
+
+Meters guards its constructor with explicit; the code initializes with =.
+
+```cpp
+struct Meters {
+    explicit Meters(double v) : value(v) {}
+    double value;
+};
+int main() {
+    Meters m = 5.0;
+    return static_cast<int>(m.value);
+}
+```
+
+- [x] Compile error: copy-initialization cannot use an explicit constructor
+- [ ] Compiles; = and direct-initialization are equivalent here
+- [ ] Compiles; a temporary Meters is materialized then copied
+- [ ] Compile error: explicit is not allowed on single-parameter constructors
+
+> `Meters m = 5.0;` is copy-initialization, which considers only converting (non-explicit) constructors — an `explicit` constructor is simply not a candidate for the implicit `double → Meters` conversion. Direct-initialization, `Meters m(5.0);` or `Meters m{5.0};`, names the type deliberately and is allowed. That asymmetry is the entire point of `explicit`.
+
+## quiz: Plain if where if constexpr was needed
+tags: compilation, templates, constexpr
+track: core
+difficulty: hard
+
+value_of dereferences pointers and passes other values through.
+
+```cpp
+#include <iostream>
+#include <type_traits>
+template <typename T>
+auto value_of(T t) {
+    if (std::is_pointer_v<T>) return *t;
+    return t;
+}
+int main() { std::cout << value_of(42); }
+```
+
+- [ ] Compiles and prints 42: the pointer branch is never taken
+- [x] Compile error: *t must compile for T = int even though the branch is dead
+- [ ] Undefined behavior: an int is dereferenced
+- [ ] Compile error: is_pointer_v cannot be used in a runtime condition
+
+> A runtime `if` is just control flow: both branches are fully instantiated for every `T`, and for `T = int` the expression `*t` is ill-formed no matter how provably false the condition is. `if constexpr` is the fix — the untaken branch is discarded at instantiation time and never type-checked against this `T`. (The two `return`s with different types would also break `auto` deduction for pointer types — same cure.)
+
+## quiz: auto with a multi-element braced initializer
+tags: compilation, auto, initialization
+track: core
+difficulty: hard
+
+Two autos, one brace pair each.
+
+```cpp
+int main() {
+    auto a{1};
+    auto b{2, 3};
+    return a;
+}
+```
+
+- [ ] Compiles: a is int, b is std::initializer_list<int>
+- [x] Compile error: braced auto with more than one element is ill-formed
+- [ ] Compiles: both are std::initializer_list<int>
+- [ ] Compile error: auto can never be brace-initialized
+
+> Since the C++17 rule change (N3922), direct-list-initialization of `auto` with exactly one element deduces the element's type — `a` is a plain `int` — and with more than one element it is ill-formed, full stop. Only the copy-list-init form `auto b = {2, 3};` still deduces `std::initializer_list<int>`. Older material predating the change gets this wrong.
+
+## quiz: string_view of a temporary string
+tags: ub, lifetime, string_view
+track: core
+difficulty: hard
+
+A view is taken of a function's return value.
+
+```cpp
+#include <iostream>
+#include <string>
+#include <string_view>
+std::string make_name() { return "temporary"; }
+int main() {
+    std::string_view sv = make_name();
+    std::cout << sv;
+}
+```
+
+- [ ] Compile error: string_view cannot bind to a temporary
+- [ ] Prints temporary: the view extends the string's lifetime
+- [x] Compiles, but printing sv is undefined behavior
+- [ ] Prints an empty string, guaranteed
+
+> The temporary `std::string` lives only until the end of the full-expression that initializes `sv`. Lifetime extension applies to temporaries bound *directly to references* — not to a class that squirrels away a pointer into the temporary's buffer, which is all `string_view` is. On the next line `sv` dangles and reading it is UB; it merely tends to "work" because the freed buffer is often still intact.
+
+## challenge: fix: range totals come up short
+tags: code-review, debugging, bounds
+track: core
+difficulty: easy
+
+This code review found a bug: totals over an inclusive index range are consistently short — the last element of the range is never counted. Find and fix it — keep the function signature.
+
+hint: Look at the loop condition, not the accumulation.
+hint: This is an off-by-one: an inclusive bound treated as exclusive.
+hint: The contract says v[lo..hi] inclusive, but the loop stops when i == hi, so v[hi] is never added.
+
+```cpp
+// starter
+// Returns the sum of v[lo..hi], both endpoints inclusive.
+// Precondition: lo <= hi < v.size().
+int sumRange(const std::vector<int>& v, std::size_t lo, std::size_t hi) {
+    int total = 0;
+    for (std::size_t i = lo; i < hi; ++i) {
+        total += v[i];
+    }
+    return total;
+}
+```
+
+```cpp
+// Returns the sum of v[lo..hi], both endpoints inclusive.
+// Precondition: lo <= hi < v.size().
+int sumRange(const std::vector<int>& v, std::size_t lo, std::size_t hi) {
+    int total = 0;
+    for (std::size_t i = lo; i <= hi; ++i) {
+        total += v[i];
+    }
+    return total;
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    std::vector<int> v{10, 20, 30, 40};
+    assert(sumRange(v, 1, 3) == 90);   // 20 + 30 + 40
+    assert(sumRange(v, 0, 0) == 10);   // single-element range
+    assert(sumRange(v, 0, 3) == 100);  // whole vector
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The documented contract is inclusive on both ends, but the loop condition `i < hi` stops one element early, so `v[hi]` is silently dropped — a single-element range even sums to zero. The fix is `i <= hi` (safe here because the precondition guarantees `hi < v.size()`). A reviewer spots this by matching the comment's contract against the loop bound: whenever a range is described as inclusive, `<` in the terminating condition is the first suspect.
+
+## challenge: fix: stubborn negatives survive the purge
+tags: code-review, debugging, iterators
+track: core
+difficulty: medium
+
+This code review found a bug: after "removing all negatives", the vector sometimes still contains negative numbers — always ones that sat right next to another negative. Find and fix it — keep the function signature.
+
+hint: Trace what happens to the indices when two negatives are adjacent.
+hint: This is the classic erase-inside-a-loop bug, in index form.
+hint: After erase(begin() + i), the next element shifts into slot i, but the loop increments i anyway and never examines it.
+
+```cpp
+// starter
+void removeNegatives(std::vector<int>& v) {
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        if (v[i] < 0) {
+            v.erase(v.begin() + i);
+        }
+    }
+}
+```
+
+```cpp
+void removeNegatives(std::vector<int>& v) {
+    for (std::size_t i = 0; i < v.size(); ) {
+        if (v[i] < 0) {
+            v.erase(v.begin() + i);   // next element shifts into slot i
+        } else {
+            ++i;
+        }
+    }
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    std::vector<int> a{3, -1, -4, -2, 5, -6};
+    removeNegatives(a);
+    assert(a == std::vector<int>({3, 5}));
+
+    std::vector<int> b{-7, -8};
+    removeNegatives(b);
+    assert(b.empty());
+
+    std::vector<int> c{1, 2, 3};
+    removeNegatives(c);
+    assert(c == std::vector<int>({1, 2, 3}));
+
+    std::puts("PASS");
+}
+```
+
+**Editorial:** When `v[i]` is erased, the element after it shifts down into index `i` — but the `for` loop then executes `++i`, so the shifted element is never inspected. Two adjacent negatives therefore leave the second one behind (`{3, -1, -4, ...}` keeps `-4`). The fix is to advance `i` only when nothing was erased; equivalently, use the erase-remove idiom (`v.erase(std::remove_if(...), v.end())`), which is also O(n) instead of O(n²). Reviewers should flag any loop that erases from the container it is indexing and then unconditionally increments.
+
+## challenge: fix: uptime goes backwards after 49 days
+tags: code-review, debugging, integer-arithmetic
+track: core
+difficulty: medium
+
+This code review found a bug: the reported uptime in milliseconds is correct for weeks, then suddenly jumps back near zero once the server has been up for about 49 days. Find and fix it — keep the function signature.
+
+hint: The return type is 64-bit, but where does the arithmetic actually happen?
+hint: This is an integer overflow: the multiplication wraps before the widening conversion.
+hint: uint32_t * int is computed in 32 bits and wraps at 2^32 (~49.7 days of milliseconds); only afterwards is the wrapped value converted to uint64_t.
+
+```cpp
+// starter
+std::uint64_t uptimeMillis(std::uint32_t uptimeSeconds) {
+    return uptimeSeconds * 1000;
+}
+```
+
+```cpp
+std::uint64_t uptimeMillis(std::uint32_t uptimeSeconds) {
+    return static_cast<std::uint64_t>(uptimeSeconds) * 1000;
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    assert(uptimeMillis(0) == 0);
+    assert(uptimeMillis(2) == 2000);
+    assert(uptimeMillis(4294967) == 4294967000ULL);      // just under the 2^32 ms line
+    assert(uptimeMillis(5000000) == 5000000000ULL);      // ~58 days: wraps in the buggy version
+    std::puts("PASS");
+}
+```
+
+**Editorial:** `uptimeSeconds * 1000` is evaluated in `std::uint32_t` (the `int` literal converts to unsigned of the same rank), so the product is reduced modulo 2^32 — 5,000,000 seconds becomes 705,032,704 ms instead of 5,000,000,000 ms. The 64-bit return type widens the value only *after* it has already wrapped. Widen an operand first: `static_cast<std::uint64_t>(uptimeSeconds) * 1000`. Reviewers should be suspicious whenever a narrow multiplication feeds a wide result type — the destination type never rescues the arithmetic.
+
+## challenge: fix: the suffix check that says yes to longer suffixes
+tags: code-review, debugging, strings
+track: core
+difficulty: hard
+
+This code review found a bug: `endsWith("bc", "abc")` returns true — a string is reported as ending with a suffix that is longer than the string itself. Find and fix it — keep the function signature.
+
+hint: What does rfind return when the suffix is not found at all, and what does the right-hand side compute when the suffix is longer than the string?
+hint: This is unsigned wraparound colliding with a sentinel value.
+hint: s.size() - suffix.size() wraps to SIZE_MAX when the suffix is one longer than s — and SIZE_MAX is exactly std::string::npos, the same value rfind returns for "not found", so the two compare equal.
+
+```cpp
+// starter
+bool endsWith(const std::string& s, const std::string& suffix) {
+    return s.rfind(suffix) == s.size() - suffix.size();
+}
+```
+
+```cpp
+bool endsWith(const std::string& s, const std::string& suffix) {
+    if (suffix.size() > s.size()) {
+        return false;
+    }
+    return s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    assert(endsWith("catalog", "log"));
+    assert(!endsWith("catalog", "dog"));
+    assert(endsWith("abc", "abc"));
+    assert(endsWith("catalog", ""));
+    assert(!endsWith("bc", "abc"));    // suffix longer than the string: buggy version says true
+    assert(!endsWith("", "x"));
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Both sides of the comparison misbehave in the same corner: when `suffix` is longer than `s`, `rfind` returns `npos` (defined as `size_t(-1)`, i.e. `SIZE_MAX`), and the unsigned subtraction `s.size() - suffix.size()` wraps around — for a suffix exactly one character longer it wraps to `SIZE_MAX` too, so "not found" compares equal to the garbage index and the function answers true. The fix rejects oversized suffixes up front and then compares the tail directly with `compare` (in C++20 you would just call `s.ends_with(suffix)`). Reviewers should treat any arithmetic on `size()` values that can go "negative", and any `==` against a value that might be `npos`, as a wraparound trap.
+
+## challenge: fix: the discount that never sticks
+tags: code-review, debugging, references
+track: core
+difficulty: easy
+
+This code review found a bug: applying a discount to the cart runs without errors, but every price in the cart is unchanged afterwards. Find and fix it — keep the function signature.
+
+hint: The math is right — look at the range-for declaration.
+hint: The loop mutates something, but not the elements in the vector.
+hint: `for (auto item : items)` copies each Item; the discount is applied to the copy, which is thrown away at the end of each iteration.
+
+```cpp
+// starter
+struct Item {
+    std::string name;
+    double price;
+};
+
+void applyDiscount(std::vector<Item>& items, double rate) {
+    for (auto item : items) {
+        item.price -= item.price * rate;
+    }
+}
+```
+
+```cpp
+struct Item {
+    std::string name;
+    double price;
+};
+
+void applyDiscount(std::vector<Item>& items, double rate) {
+    for (auto& item : items) {
+        item.price -= item.price * rate;
+    }
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    std::vector<Item> cart{{"keyboard", 100.0}, {"mouse", 40.0}};
+    applyDiscount(cart, 0.5);
+    assert(cart[0].price == 50.0);
+    assert(cart[1].price == 20.0);
+    assert(cart[0].name == "keyboard");
+    std::puts("PASS");
+}
+```
+
+**Editorial:** `for (auto item : items)` declares `item` as a *copy* of each element, so the discount mutates a temporary that dies at the end of the iteration — the vector itself is untouched (and each iteration also pays for copying a `std::string`). Change the loop variable to `auto&` to mutate in place (`const auto&` is the right default when only reading). Reviewers spot this by checking every range-for that writes to the loop variable: if the intent is mutation, the declaration must be a reference.
+
+## challenge: fix: the settings map that grows on read
+tags: code-review, debugging, containers
+track: core
+difficulty: medium
+
+This code review found a bug: merely *reading* a setting adds phantom empty entries to the map — after a few lookups of unknown keys, dumps of the settings show keys nobody ever set. Find and fix it — keep the function signature.
+
+hint: The returned values look fine; watch what happens to settings.size() after a miss.
+hint: This is std::map::operator[] doing more than a lookup.
+hint: settings[key] default-constructs and inserts an empty string for every missing key — twice per miss here — so reads mutate the map.
+
+```cpp
+// starter
+std::string getSetting(std::map<std::string, std::string>& settings,
+                       const std::string& key) {
+    if (settings[key].empty()) {
+        return "default";
+    }
+    return settings[key];
+}
+```
+
+```cpp
+std::string getSetting(std::map<std::string, std::string>& settings,
+                       const std::string& key) {
+    auto it = settings.find(key);
+    if (it == settings.end() || it->second.empty()) {
+        return "default";
+    }
+    return it->second;
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    std::map<std::string, std::string> settings{
+        {"host", "localhost"},
+        {"port", "8080"},
+    };
+    assert(getSetting(settings, "host") == "localhost");
+    assert(getSetting(settings, "retries") == "default");
+    assert(settings.size() == 2);                    // buggy version inserted "retries"
+    assert(getSetting(settings, "timeout") == "default");
+    assert(settings.size() == 2);                    // ...and "timeout"
+    assert(settings.count("retries") == 0);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** `std::map::operator[]` is find-or-*insert*: for a missing key it default-constructs an empty `std::string`, inserts it, and returns a reference to it. Here every miss silently plants an empty entry (and the function even does it twice per call), so read paths mutate shared state — corrupting iteration, size checks, and serialization of the settings. The fix is `find` plus an end-check, leaving the map untouched. In review, `operator[]` on a map inside anything that is semantically a *read* is an instant flag — that is also why it does not exist on `const` maps.
+
+## challenge: fix: every rectangle has zero area
+tags: code-review, debugging, classes
+track: core
+difficulty: easy
+
+This code review found a bug: no matter what dimensions a Rectangle is constructed with, `area()` always returns 0. Find and fix it — keep the function signature.
+
+hint: The constructor body runs without errors — but what exactly does each assignment assign to?
+hint: This is name shadowing: parameters hiding members.
+hint: Inside the constructor body, `width` and `height` name the parameters, so both statements assign a parameter to itself and the members keep their default 0.
+
+```cpp
+// starter
+class Rectangle {
+public:
+    Rectangle(int width, int height) {
+        width = width;
+        height = height;
+    }
+    int area() const { return width * height; }
+private:
+    int width = 0;
+    int height = 0;
+};
+```
+
+```cpp
+class Rectangle {
+public:
+    Rectangle(int width, int height)
+        : width(width), height(height) {}
+    int area() const { return width * height; }
+private:
+    int width = 0;
+    int height = 0;
+};
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    Rectangle r(3, 4);
+    assert(r.area() == 12);
+    Rectangle q(7, 2);
+    assert(q.area() == 14);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The constructor parameters `width` and `height` shadow the data members of the same name, so `width = width;` assigns the parameter to itself and the members are never written — they keep their default initializers of 0. A member-initializer list fixes it, because in `: width(width)` the name *outside* the parentheses is looked up as a member while the name inside is the parameter; `this->width = width;` in the body works too. Reviewers catch this by being wary of constructor bodies that assign same-named identifiers — and most compilers will point at it with `-Wshadow` or self-assign warnings, which is a good reason to build with warnings on.
+
+## challenge: fix: permissions only work for bit zero
+tags: code-review, debugging, operators
+track: core
+difficulty: medium
+
+This code review found a bug: permission checks pass or fail based only on whether the user has the READ bit — asking for WRITE with WRITE granted returns false, while asking for EXEC with only READ granted returns true. Find and fix it — keep the function signature.
+
+hint: The bitmask logic is conceptually right; the compiler just isn't grouping it the way the author thought.
+hint: This is an operator-precedence bug: == binds tighter than &.
+hint: `flags & required == required` parses as `flags & (required == required)`, i.e. `flags & 1` — it only ever tests the lowest bit of flags.
+
+```cpp
+// starter
+// Returns true when every bit set in `required` is also set in `flags`.
+bool hasPermission(unsigned flags, unsigned required) {
+    return flags & required == required;
+}
+```
+
+```cpp
+// Returns true when every bit set in `required` is also set in `flags`.
+bool hasPermission(unsigned flags, unsigned required) {
+    return (flags & required) == required;
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    constexpr unsigned FLAG_READ  = 1u << 0;
+    constexpr unsigned FLAG_WRITE = 1u << 1;
+    constexpr unsigned FLAG_EXEC  = 1u << 2;
+
+    assert(hasPermission(FLAG_WRITE, FLAG_WRITE));                  // buggy: false
+    assert(!hasPermission(FLAG_READ, FLAG_EXEC));                   // buggy: true
+    assert(hasPermission(FLAG_READ | FLAG_WRITE, FLAG_WRITE));
+    assert(!hasPermission(FLAG_WRITE, FLAG_WRITE | FLAG_EXEC));
+    assert(hasPermission(FLAG_READ, FLAG_READ));
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Equality binds tighter than bitwise AND, so `flags & required == required` evaluates `required == required` first — always `true`, which converts to `1` — and the whole check collapses to `flags & 1`: "does the user have the READ bit". Parenthesize the mask test: `(flags & required) == required`. This precedence quirk (relational and equality operators binding tighter than `&`, `^`, `|`) is a C legacy famous enough that compilers emit `-Wparentheses` for it; in review, any bitwise expression mixed with a comparison and no parentheses should be re-derived by hand.
+
+## challenge: fix: the sensor reading that doesn't count
+tags: code-review, debugging, floating-point
+track: core
+difficulty: easy
+
+This code review found a bug: counting how many sensor readings equal 0.3 misses readings that were computed as 0.1 + 0.2 — values that print identically are not counted. Find and fix it — keep the function signature.
+
+hint: Print the readings with 17 significant digits and compare them again.
+hint: This is exact floating-point equality where a tolerance is needed.
+hint: 0.1 + 0.2 is 0.30000000000000004 in binary floating point, so operator== rejects it; compare |r - target| against a small epsilon instead.
+
+```cpp
+// starter
+int countOccurrences(const std::vector<double>& readings, double target) {
+    int count = 0;
+    for (double r : readings) {
+        if (r == target) {
+            ++count;
+        }
+    }
+    return count;
+}
+```
+
+```cpp
+int countOccurrences(const std::vector<double>& readings, double target) {
+    int count = 0;
+    for (double r : readings) {
+        if (std::fabs(r - target) < 1e-9) {
+            ++count;
+        }
+    }
+    return count;
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    std::vector<double> readings{0.1 + 0.2, 0.3, 0.7};
+    assert(countOccurrences(readings, 0.3) == 2);   // buggy: 1 (0.1 + 0.2 != 0.3 exactly)
+    assert(countOccurrences(readings, 0.7) == 1);
+    assert(countOccurrences(readings, 9.9) == 0);
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Neither 0.1 nor 0.2 nor 0.3 is exactly representable in binary floating point; `0.1 + 0.2` rounds to 0.30000000000000004, which is one ULP away from the literal `0.3`, so exact `==` calls them different even though both print as "0.3" at default precision. The fix compares against a tolerance (`std::fabs(r - target) < 1e-9`); production code should pick an epsilon meaningful for the domain, or a relative tolerance for values far from 1. Reviewers should challenge any `==`/`!=` between computed floating-point values — exact equality is only defensible for values that were assigned, never derived.
+
+## challenge: fix: the zeros that won't leave
+tags: code-review, debugging, algorithms
+track: core
+difficulty: medium
+
+This code review found a bug: after "stripping zeros" the vector has exactly the same size as before, and its tail contains stale leftover values. Find and fix it — keep the function signature.
+
+hint: Check the vector's size after the call — did anything actually get removed?
+hint: This is the remove/erase idiom with the second half missing.
+hint: std::remove only shifts the kept elements to the front and returns the new logical end; it cannot change the vector's size, so the erase(...) call is mandatory.
+
+```cpp
+// starter
+void stripZeros(std::vector<int>& v) {
+    std::remove(v.begin(), v.end(), 0);
+}
+```
+
+```cpp
+void stripZeros(std::vector<int>& v) {
+    v.erase(std::remove(v.begin(), v.end(), 0), v.end());
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    std::vector<int> a{1, 0, 2, 0, 3};
+    stripZeros(a);
+    assert(a.size() == 3);                    // buggy: still 5
+    assert(a == std::vector<int>({1, 2, 3}));
+
+    std::vector<int> b{0, 0, 0};
+    stripZeros(b);
+    assert(b.empty());
+
+    std::vector<int> c{4, 5};
+    stripZeros(c);
+    assert(c == std::vector<int>({4, 5}));
+
+    std::puts("PASS");
+}
+```
+
+**Editorial:** `std::remove` works on iterators and knows nothing about the container: it shifts every non-zero element toward the front and returns an iterator to the new logical end, leaving the physical size untouched and the tail full of unspecified leftovers (`{1,0,2,0,3}` becomes `{1,2,3,0,3}`). The removal is only complete when the container erases that tail — `v.erase(newEnd, v.end())` — which is why it is called the erase-remove idiom (C++20's `std::erase(v, 0)` does both steps). A reviewer spots this instantly: a call to `std::remove`/`remove_if` whose return value is discarded is always a bug.
+
+## challenge: fix: the packet validator that leaks
+tags: code-review, debugging, raii
+track: core
+difficulty: medium
+
+This code review found a bug: a long-running service that rejects many malformed packets slowly exhausts memory — the live-buffer counter climbs and never comes back down. Find and fix it — keep the function signature.
+
+hint: Follow every return path and ask which ones run the delete.
+hint: This is a resource leak on an early return.
+hint: The validation early-return exits before `delete buf`, so every rejected packet leaks one Buffer; RAII (std::unique_ptr) makes all exits safe.
+
+```cpp
+// starter
+struct Buffer {
+    inline static int alive = 0;
+    std::array<int, 64> data{};
+    Buffer() { ++alive; }
+    ~Buffer() { --alive; }
+};
+
+bool processPacket(const std::vector<int>& packet) {
+    Buffer* buf = new Buffer();
+    if (packet.empty() || packet.size() > buf->data.size()) {
+        return false;   // reject malformed packet
+    }
+    for (std::size_t i = 0; i < packet.size(); ++i) {
+        buf->data[i] = packet[i];
+    }
+    bool ok = buf->data[0] == 42;
+    delete buf;
+    return ok;
+}
+```
+
+```cpp
+struct Buffer {
+    inline static int alive = 0;
+    std::array<int, 64> data{};
+    Buffer() { ++alive; }
+    ~Buffer() { --alive; }
+};
+
+bool processPacket(const std::vector<int>& packet) {
+    auto buf = std::make_unique<Buffer>();
+    if (packet.empty() || packet.size() > buf->data.size()) {
+        return false;   // reject malformed packet
+    }
+    for (std::size_t i = 0; i < packet.size(); ++i) {
+        buf->data[i] = packet[i];
+    }
+    return buf->data[0] == 42;
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    assert(processPacket({42, 7, 9}) == true);
+    assert(processPacket({7}) == false);      // valid size, wrong magic: cleaned up in both versions
+    assert(Buffer::alive == 0);
+    assert(processPacket({}) == false);       // malformed: early return
+    assert(Buffer::alive == 0);               // buggy version leaked one Buffer here
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The happy path pairs `new Buffer()` with `delete buf`, but the malformed-packet branch returns *before* the delete, so every rejected packet leaks a `Buffer` — invisible in tests that only send valid traffic, fatal in a service bombarded with junk. Deleting before the early return would patch it, but the robust fix is RAII: hold the buffer in a `std::unique_ptr` (or just declare it on the stack here) so *every* exit path — including future returns and exceptions — releases it. Reviewers should treat any raw `new` in a function with multiple returns as guilty until proven paired on all paths.
+
+## challenge: fix: the display name that gets stuck
+tags: code-review, debugging, caching
+track: core
+difficulty: hard
+
+This code review found a bug: the function sometimes returns stale data — after the first user is looked up, every other user is shown the first user's display name. Find and fix it — keep the function signature.
+
+hint: The cache is doing its job a little too well; look at the condition that decides a cache hit.
+hint: This is cache staleness: the validity check tests the wrong thing.
+hint: "Is the cached string non-empty" only proves the cache was filled once by *someone* — a hit must require cachedId == userId, otherwise the first result is returned for every id forever.
+
+```cpp
+// starter
+const std::string& displayName(int userId) {
+    static int cachedId = -1;
+    static std::string cachedName;
+    if (!cachedName.empty()) {
+        return cachedName;   // cache hit
+    }
+    cachedId = userId;
+    cachedName = "user-" + std::to_string(userId);
+    return cachedName;
+}
+```
+
+```cpp
+const std::string& displayName(int userId) {
+    static int cachedId = -1;
+    static std::string cachedName;
+    if (cachedId != userId || cachedName.empty()) {
+        cachedId = userId;
+        cachedName = "user-" + std::to_string(userId);
+    }
+    return cachedName;   // cache hit only when cachedId == userId
+}
+```
+
+```cpp
+// harness
+#include <bits/stdc++.h>
+//__USER__
+int main() {
+    assert(displayName(7) == "user-7");
+    assert(displayName(7) == "user-7");     // repeat lookup: served from cache
+    assert(displayName(42) == "user-42");   // buggy version returns stale "user-7"
+    assert(displayName(7) == "user-7");     // and the cache must refresh back, too
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The cache-hit test asks "do I have *a* cached name?" instead of "do I have the cached name *for this userId*?", so whichever id arrives first poisons the cache for every id after it — `cachedId` is even stored but never consulted. The fix keys the hit on `cachedId == userId` and refills otherwise. This bug family (cache checked for presence but not for matching key/version) is what "sometimes returns stale data" reports usually turn out to be; a reviewer spots it by demanding that every cache read compares against the *full* lookup key — and by noticing stored state (`cachedId`) that nothing ever reads. Note the single-entry static cache is also not thread-safe; under concurrency this wants a mutex or a per-key map.
+
+## quiz: review: the welcome email
+tags: code-review, move-semantics
+track: core
+difficulty: easy
+
+You're reviewing this code. What's the bug?
+
+```cpp
+void sendEmail(const std::string& to, const std::string& body);
+
+void registerUser(std::vector<std::string>& audit, std::string email) {
+    std::string body = "Welcome aboard, " + email + "!";
+    audit.push_back(std::move(email));
+    sendEmail(email, body);
+}
+```
+
+- [ ] `audit.push_back` stores a reference to a local variable that dangles when the function returns
+- [x] `email` is read after being moved from, so the mail is sent to a moved-from (in practice empty) address
+- [ ] `body` must be passed to `sendEmail` by value because the reference parameter outlives the call
+- [ ] calling `std::move` on a by-value function parameter is undefined behavior
+
+> After `std::move(email)` hands the string to `push_back`, `email` is left in a valid-but-unspecified state — empty on every mainstream implementation — so `sendEmail` targets a blank address. Reorder the code to use `email` before moving it, or move it only in the last use. A reviewer should treat any read of a name after `std::move(name)` as a red flag.
+
+## quiz: review: purging expired sessions
+tags: code-review, iterators
+track: core
+difficulty: medium
+
+You're reviewing this code. What's the bug?
+
+```cpp
+struct Session {
+    int id;
+    bool expired;
+};
+
+void purgeExpired(std::vector<Session>& sessions) {
+    for (auto it = sessions.begin(); it != sessions.end(); ++it) {
+        if (it->expired) {
+            sessions.erase(it);
+        }
+    }
+}
+```
+
+- [ ] `sessions.end()` must be cached before the loop because calling it repeatedly is invalid
+- [ ] `erase` on a `std::vector` is O(n), so this function should use `std::list` instead
+- [x] `erase(it)` invalidates `it`, so the `++it` that follows is undefined behavior and adjacent expired sessions get skipped
+- [ ] the loop needs a `const_iterator` because `erase` requires one since C++11
+
+> `vector::erase` invalidates the erased iterator and everything after it; incrementing it afterwards is UB, and even when it "works" the element shifted into the erased slot is never examined. The fix is `it = sessions.erase(it)` and incrementing only in the else-branch — or the erase-remove idiom. Any loop that erases from the container it is iterating deserves a hard look in review.
+
+## quiz: review: printing a label
+tags: code-review, lifetime
+track: core
+difficulty: medium
+
+You're reviewing this code. What's the bug?
+
+```cpp
+std::string makeLabel(int id) {
+    return "item-" + std::to_string(id);
+}
+
+void printLabel(int id) {
+    std::string_view label = makeLabel(id);
+    std::cout << "label=" << label << '\n';
+}
+```
+
+- [ ] `std::string_view` is not null-terminated, so streaming it to `std::cout` reads past the end
+- [ ] `makeLabel` returns by value, which forces an extra heap allocation per call
+- [x] `label` views a temporary `std::string` that is destroyed at the end of the declaration, so the print reads freed memory
+- [ ] `std::string_view` cannot be constructed from a `std::string` without calling `.data()` explicitly
+
+> The temporary returned by `makeLabel` lives only until the end of the full expression that initializes `label`; the view dangles on the very next line. Store the result in a `std::string` (or print the temporary directly). In review, any `string_view` initialized from a function returning `std::string` by value is a lifetime bug.
+
+## quiz: review: running a download task
+tags: code-review, polymorphism
+track: core
+difficulty: medium
+
+You're reviewing this code. What's the bug?
+
+```cpp
+struct Task {
+    virtual void run() = 0;
+};
+
+struct DownloadTask : Task {
+    std::string url;
+    std::vector<char> buffer;
+    void run() override { buffer.resize(1 << 20); }
+};
+
+void execute() {
+    std::unique_ptr<Task> task = std::make_unique<DownloadTask>();
+    task->run();
+}
+```
+
+- [ ] `run` is declared `override` but the base method is pure virtual, so the override never binds
+- [x] `Task` has no virtual destructor, so destroying `DownloadTask` through `unique_ptr<Task>` is undefined behavior and leaks `url` and `buffer` in practice
+- [ ] `std::make_unique<DownloadTask>()` cannot be assigned to `std::unique_ptr<Task>` without an explicit cast
+- [ ] `buffer.resize` inside `run` reallocates the vector and invalidates the `task` pointer
+
+> When `task` goes out of scope, `unique_ptr<Task>` runs `delete` on a `Task*` whose static type has a non-virtual destructor — undefined behavior, and typically the derived members' destructors never run, leaking the buffer. Add `virtual ~Task() = default;` to the base. Every polymorphic base deleted through a base pointer needs a virtual destructor; reviewers should check this on any `virtual` function they see.
+
+## quiz: review: parallel match counting
+tags: code-review, concurrency
+track: core
+difficulty: hard
+
+You're reviewing this code. What's the bug?
+
+```cpp
+int matches = 0;
+
+void countMatches(const std::vector<int>& data, int needle) {
+    std::vector<std::thread> workers;
+    for (int t = 0; t < 4; ++t) {
+        workers.emplace_back([&, t] {
+            for (std::size_t i = t; i < data.size(); i += 4) {
+                if (data[i] == needle) ++matches;
+            }
+        });
+    }
+    for (auto& w : workers) w.join();
+}
+```
+
+- [ ] the lambda captures `data` by reference, which dangles because the threads outlive `countMatches`
+- [ ] `emplace_back` copies the `std::thread`, and threads are not copyable
+- [x] four threads increment `matches` with no synchronization — a data race, so counts are lost and the behavior is undefined
+- [ ] the stride `i += 4` skips elements whenever `data.size()` is not a multiple of 4
+
+> `++matches` is a read-modify-write on a shared non-atomic int from four threads at once: a data race, which is undefined behavior and in practice loses increments. Make it `std::atomic<int>`, or better, accumulate per-thread locals and sum after `join`. The reference captures are fine here because every worker is joined before the function returns.
+
+## quiz: review: the money transfer
+tags: code-review, concurrency
+track: core
+difficulty: hard
+
+You're reviewing this code. What's the bug?
+
+```cpp
+struct Account {
+    std::mutex m;
+    long balance = 0;
+};
+
+void transfer(Account& from, Account& to, long amount) {
+    std::lock_guard<std::mutex> lockFrom(from.m);
+    std::lock_guard<std::mutex> lockTo(to.m);
+    from.balance -= amount;
+    to.balance += amount;
+}
+// thread A: transfer(checking, savings, 100);
+// thread B: transfer(savings, checking, 50);
+```
+
+- [ ] `std::lock_guard` does not release the mutex if an exception is thrown between the two locks
+- [x] the two calls lock the same pair of mutexes in opposite order, so each thread can hold one mutex while waiting for the other — deadlock
+- [ ] `balance` must be `std::atomic<long>` even while both mutexes are held
+- [ ] `transfer` modifies `from.balance` without checking for a negative result first
+
+> Thread A locks `checking.m` then wants `savings.m`; thread B locks `savings.m` then wants `checking.m` — a classic ABBA deadlock. Acquire both with one deadlock-avoiding operation, `std::scoped_lock lock(from.m, to.m);`, or lock in a globally consistent order (e.g. by address). Whenever review shows two mutexes taken one after the other, ask who else takes them in the other order.
+
+## quiz: review: appending a summary line
+tags: code-review, lifetime
+track: core
+difficulty: medium
+
+You're reviewing this code. What's the bug?
+
+```cpp
+void appendSummary(std::vector<std::string>& lines) {
+    if (lines.empty()) {
+        return;
+    }
+    const std::string& title = lines.front();
+    lines.push_back("----------");
+    lines.push_back("End of: " + title);
+}
+```
+
+- [ ] `lines.front()` returns a temporary, so binding it to a reference extends the wrong lifetime
+- [x] `push_back` can reallocate the vector, leaving `title` a dangling reference when it is read on the last line
+- [ ] the second `push_back` invalidates the string literal appended by the first one
+- [ ] `"End of: " + title` concatenates a `const char*` with a `std::string`, which does not compile
+
+> If the first `push_back` grows the vector past its capacity, every element is moved to new storage and `title` — a reference into the old buffer — dangles; the concatenation then reads freed memory. Take a copy (`std::string title = lines.front();`) before mutating the vector. References, pointers, and iterators into a `std::vector` are only valid until the next capacity-changing operation.
+
+## quiz: review: adjacent duplicates
+tags: code-review, integer-arithmetic
+track: core
+difficulty: medium
+
+You're reviewing this code. What's the bug?
+
+```cpp
+bool hasAdjacentDuplicate(const std::vector<int>& values) {
+    for (std::size_t i = 0; i < values.size() - 1; ++i) {
+        if (values[i] == values[i + 1]) {
+            return true;
+        }
+    }
+    return false;
+}
+```
+
+- [ ] `i + 1` overflows `std::size_t` on the last iteration and wraps to zero
+- [ ] the function returns after the first pair, so later duplicates are never reported
+- [x] when `values` is empty, `values.size() - 1` wraps to a huge unsigned value and the loop reads far out of bounds
+- [ ] `std::size_t` cannot index a `std::vector<int>`; the index must be `std::vector<int>::size_type`
+
+> `size()` returns an unsigned type, so `0 - 1` wraps to `SIZE_MAX` and an empty input turns the loop bound into effectively infinity — out-of-bounds reads and a likely crash. Guard with `if (values.size() < 2) return false;` or write the condition as `i + 1 < values.size()`, which never underflows. Unsigned subtraction in loop bounds is a classic review catch.
+
+## quiz: review: moving average
+tags: code-review, bounds
+track: core
+difficulty: easy
+
+You're reviewing this code. What's the bug?
+
+```cpp
+double movingAverage(const double* samples, int count) {
+    double sum = 0.0;
+    for (int i = 0; i <= count; ++i) {
+        sum += samples[i];
+    }
+    return sum / count;
+}
+```
+
+- [ ] `sum / count` performs integer division and truncates the result
+- [x] the loop condition `i <= count` reads `samples[count]`, one element past the end of the array
+- [ ] `sum` should be initialized to `samples[0]`, not `0.0`
+- [ ] `count` should be `std::size_t`, because a negative count makes the loop skip all elements
+
+> With `i <= count` the final iteration reads `samples[count]`, which is one past the last valid element — an out-of-bounds read that silently corrupts the average (or crashes). The condition must be `i < count`. Off-by-one on `<=` versus `<` at an array bound is the first thing to check in any raw-pointer loop.
+
+## quiz: review: config lookup
+tags: code-review, null-safety
+track: core
+difficulty: easy
+
+You're reviewing this code. What's the bug?
+
+```cpp
+struct Config {
+    int timeoutMs;
+};
+
+Config* findConfig(const std::string& name);   // returns nullptr when absent
+
+int getTimeout(const std::string& name) {
+    Config* cfg = findConfig(name);
+    return cfg->timeoutMs;
+}
+```
+
+- [ ] `findConfig` returns a raw pointer, so the caller of `getTimeout` leaks a `Config` on every call
+- [ ] `name` is passed by const reference and may dangle inside `findConfig`
+- [x] `cfg` is dereferenced without a null check, so an unknown name dereferences `nullptr`
+- [ ] `timeoutMs` is uninitialized in `Config`, so the returned value is garbage even on success
+
+> The comment on `findConfig` documents that it can return `nullptr`, and `getTimeout` dereferences the result unconditionally — undefined behavior (usually a crash) for any unknown name. Check the pointer and return a sensible default or signal the error. When an API documents a null return, every call site must be reviewed for a matching check.
+
+## quiz: review: retry policy defaults
+tags: code-review, classes
+track: core
+difficulty: easy
+
+You're reviewing this code. What's the bug?
+
+```cpp
+class RetryPolicy {
+public:
+    RetryPolicy(int maxAttempts, int delayMs) {
+        maxAttempts = maxAttempts;
+        delayMs = delayMs;
+    }
+    int attempts() const { return maxAttempts; }
+    int delay() const { return delayMs; }
+private:
+    int maxAttempts = 3;
+    int delayMs = 100;
+};
+```
+
+- [ ] the members are initialized twice — once by the default initializers and once in the constructor body
+- [x] the constructor parameters shadow the members, so each statement assigns a parameter to itself and every policy keeps the defaults 3 and 100
+- [ ] the constructor is missing `explicit`, so a stray brace-list converts to `RetryPolicy` silently
+- [ ] `attempts()` and `delay()` return copies instead of const references, losing updates
+
+> Inside the constructor body, `maxAttempts` names the parameter, not the member, so `maxAttempts = maxAttempts;` is a self-assignment and the members silently keep their default values. Use a member-initializer list (`: maxAttempts(maxAttempts), delayMs(delayMs)`) or `this->maxAttempts = maxAttempts;`. Same-named constructor parameters are fine — but only with an initializer list.
+
+## quiz: review: ramp to target
+tags: code-review, floating-point
+track: core
+difficulty: easy
+
+You're reviewing this code. What's the bug?
+
+```cpp
+bool rampReaches(double start, double step, double target, int maxSteps) {
+    double level = start;
+    for (int i = 0; i < maxSteps; ++i) {
+        if (level == target) {
+            return true;
+        }
+        level += step;
+    }
+    return false;
+}
+// rampReaches(0.0, 0.1, 0.3, 100) is expected to return true
+```
+
+- [ ] `level += step` accumulates into a `double` but `step` is promoted to `long double`, changing the sum
+- [x] `level == target` compares accumulated floating-point values exactly; 0.1 + 0.1 + 0.1 is not exactly 0.3, so the function returns false
+- [ ] the loop runs `maxSteps` times even after passing `target`, wasting iterations
+- [ ] `start`, `step`, and `target` should be `float`, since `double` cannot represent 0.1
+
+> 0.1 has no exact binary representation, so three accumulated steps land at 0.30000000000000004 — never exactly equal to `0.3` — and the ramp "misses" its target. Compare with a tolerance (`std::fabs(level - target) < eps`) or with `level >= target` for a monotone ramp. Exact `==` between computed floating-point values is almost always wrong.
+
+## quiz: review: block offsets
+tags: code-review, integer-arithmetic
+track: core
+difficulty: medium
+
+You're reviewing this code. What's the bug?
+
+```cpp
+constexpr int kBlockSize = 64 * 1024;   // 64 KiB blocks
+
+long long blockOffset(int blockIndex) {
+    return blockIndex * kBlockSize;
+}
+
+bool validOffset(int blockIndex, long long fileSize) {
+    return blockOffset(blockIndex) + kBlockSize <= fileSize;
+}
+```
+
+- [ ] `kBlockSize` participates in a `long long` expression, so it must be declared `long long` to compile
+- [ ] `<=` in `validOffset` should be `<`, because a block ending exactly at `fileSize` is invalid
+- [x] `blockIndex * kBlockSize` multiplies two `int`s, so the product overflows before it is widened to `long long` — offsets go wrong past 2 GiB
+- [ ] returning `long long` from an `int` expression truncates the upper 32 bits
+
+> The multiplication happens entirely in `int`; for `blockIndex >= 32768` the product exceeds `INT_MAX`, which is signed overflow — undefined behavior that in practice yields a negative offset. Widen an operand first: `return static_cast<long long>(blockIndex) * kBlockSize;`. The `long long` return type does not help — the damage is done before the conversion. Any `int * int` assigned to a 64-bit type deserves scrutiny.
+
 ## fact: Single Responsibility — one reason to change
 tags: solid, srp, cohesion
 track: design
@@ -8024,7 +9579,7 @@ int main() {
 ## challenge: Generate Parentheses
 tags: backtracking, string, dynamic-programming
 track: faang
-difficulty: easy
+difficulty: medium
 
 Given `n` pairs of parentheses, return all combinations of well-formed (balanced) parentheses using exactly `n` opening and `n` closing brackets. Return the answer in any order.
 
@@ -14753,53 +16308,6 @@ int main() {
 
 **Editorial:** Bursting all balloons with the fewest arrows is an interval-covering problem. Sort balloons by their right edge; place the first arrow at that edge, which greedily pops every subsequent balloon whose start lies at or before it. Only when a balloon starts strictly beyond the current arrow do we need a fresh arrow, positioned at the new balloon's end. Comparing starts against the arrow position with a 64-bit variable avoids overflow near the `int` limits. O(n log n) time, O(1) extra space.
 
-## challenge: Single Number
-tags: bit-tricks, array, hash-table
-track: faang
-difficulty: easy
-
-Given a non-empty array `nums` in which every element appears exactly twice except for one element that appears once, find that single element. Your solution must run in linear time and use only constant extra space.
-
-Constraints: `1 <= nums.length <= 3*10^4`, `nums.length` is odd, `-3*10^4 <= nums[i] <= 3*10^4`, exactly one element is unpaired.
-
-Example: `nums = [2,2,1]` → `1`. Example: `nums = [4,1,2,1,2]` → `4`. Example: `nums = [1]` → `1`.
-
-hint: A hash set works but costs O(n) space; the constraints hint at something cheaper.
-hint: XOR has two properties that matter: `x ^ x == 0` and `x ^ 0 == x`, and it is commutative and associative.
-hint: XOR every element together. All paired values cancel to 0, leaving only the lone element.
-
-```cpp
-// starter
-#include <vector>
-int singleNumber(std::vector<int>& nums);
-```
-
-```cpp
-int singleNumber(std::vector<int>& nums) {
-    int result = 0;
-    for (int x : nums) result ^= x;
-    return result;
-}
-```
-
-```cpp
-// harness
-#include <cstdio>
-#include <vector>
-using std::vector;
-//__USER__
-int main() {
-    { vector<int> n{2,2,1};       if (singleNumber(n) != 1)  { std::puts("case1"); return 1; } }
-    { vector<int> n{4,1,2,1,2};   if (singleNumber(n) != 4)  { std::puts("case2"); return 1; } }
-    { vector<int> n{1};           if (singleNumber(n) != 1)  { std::puts("case3"); return 1; } }
-    { vector<int> n{-1,-1,-2};    if (singleNumber(n) != -2) { std::puts("case4"); return 1; } }
-    { vector<int> n{7,3,3,7,11};  if (singleNumber(n) != 11) { std::puts("case5"); return 1; } }
-    std::puts("PASS");
-}
-```
-
-**Editorial:** XOR is its own inverse: any value XORed with itself is 0, and XOR with 0 is the identity. Because XOR is commutative and associative, folding the whole array with `^` makes every duplicated pair vanish, and only the unique value remains. This gives O(n) time and O(1) space with no hashing.
-
 ## challenge: Number of 1 Bits
 tags: bit-tricks, divide-and-conquer
 track: faang
@@ -21236,7 +22744,7 @@ int main() {
 
 **Editorial:** 4Sum is a nested reduction of 3Sum. Sort the array, then fix the two outer indices with a double loop; for each fixed pair the problem becomes finding a pair in the sorted suffix that sums to `target - nums[i] - nums[j]`, which the classic two-pointer converge solves in linear time. Duplicate quadruplets are avoided by skipping equal adjacent values at all four positions. The critical correctness detail is 64-bit accumulation: four values near 10^9 exceed the 32-bit range, so the sums are computed as `long long`. Two outer loops times a linear inner scan give O(n^3) time and O(1) extra space beyond the output.
 
-## challenge: Backspace String Compare
+## challenge: Backspace String Compare (O(1) space)
 tags: two-pointers, string, stack
 track: faang
 difficulty: hard
@@ -21303,7 +22811,7 @@ int main() {
 
 **Editorial:** Because a backspace only erases characters to its left, scanning from the right lets you resolve deletions on the fly without materializing the edited strings. For each string keep a counter of pending skips: a `'#'` increments the skip count, and a normal character is either consumed by a pending skip or is the next surviving character. Advance both pointers to their next survivors and compare; if one string still has a survivor while the other is exhausted, they differ. This runs in O(n + m) time and O(1) extra space, improving on the stack-based O(n + m) space solution.
 
-## challenge: Partition Labels
+## challenge: Partition Labels (one pass, O(1) extra)
 tags: two-pointers, greedy, string, hash-table
 track: faang
 difficulty: hard
@@ -21876,110 +23384,6 @@ int main() {
 ```
 
 **Editorial:** Follow the BST ordering downward — go left when the new value is smaller, right when larger — until you fall off the tree at a null pointer. That empty slot is the correct home for the new node. Returning the subtree root from each call lets the parent reattach the (unchanged or newly created) child cleanly. The walk follows one root-to-leaf path. O(h) time, O(h) space for recursion.
-
-## challenge: Path Sum II
-tags: tree, dfs, backtracking
-track: faang
-difficulty: medium
-
-Given the root of a binary tree and an integer `targetSum`, return all root-to-leaf paths where the sum of the node values along the path equals `targetSum`. Each path is returned as the list of node values in order from root to leaf. A leaf is a node with no children.
-
-Constraints: `0 <= n <= 5000` nodes, `-1000 <= Node.val <= 1000`, `-10^9 <= targetSum <= 10^9`.
-
-Example: `[5,4,8,11,null,13,4,7,2,null,null,5,1], targetSum = 22` → `[[5,4,11,2],[5,8,4,5]]`. Example: `[1,2,3], targetSum = 5` → `[]`. Example: empty, `targetSum = 0` → `[]`.
-
-hint: This is a depth-first walk that must remember the whole path so far, not just a running sum.
-hint: Push the current node onto a path list on entry and pop it on exit — classic backtracking so siblings do not see each other's nodes.
-hint: Record a copy of the path only when you are at a leaf and the remaining target has reached exactly zero.
-
-```cpp
-// starter
-#include <vector>
-struct TreeNode {
-    int val;
-    TreeNode* left;
-    TreeNode* right;
-    TreeNode(int x) : val(x), left(nullptr), right(nullptr) {}
-};
-std::vector<std::vector<int>> pathSum(TreeNode* root, int targetSum);
-```
-
-```cpp
-std::vector<std::vector<int>> pathSum(TreeNode* root, int targetSum) {
-    std::vector<std::vector<int>> res;
-    std::vector<int> path;
-    std::function<void(TreeNode*, int)> dfs = [&](TreeNode* node, int rem) {
-        if (!node) return;
-        path.push_back(node->val);
-        rem -= node->val;
-        if (!node->left && !node->right) {
-            if (rem == 0) res.push_back(path);
-        } else {
-            dfs(node->left, rem);
-            dfs(node->right, rem);
-        }
-        path.pop_back();
-    };
-    dfs(root, targetSum);
-    return res;
-}
-```
-
-```cpp
-// harness
-#include <cstdio>
-#include <vector>
-#include <queue>
-#include <functional>
-#include <optional>
-using std::vector;
-using std::optional;
-struct TreeNode {
-    int val;
-    TreeNode* left;
-    TreeNode* right;
-    TreeNode(int x) : val(x), left(nullptr), right(nullptr) {}
-};
-static TreeNode* build(const vector<optional<int>>& a) {
-    if (a.empty() || !a[0].has_value()) return nullptr;
-    TreeNode* root = new TreeNode(*a[0]);
-    std::queue<TreeNode*> q; q.push(root);
-    size_t i = 1;
-    while (!q.empty() && i < a.size()) {
-        TreeNode* cur = q.front(); q.pop();
-        if (i < a.size()) { if (a[i].has_value()) { cur->left  = new TreeNode(*a[i]); q.push(cur->left);  } ++i; }
-        if (i < a.size()) { if (a[i].has_value()) { cur->right = new TreeNode(*a[i]); q.push(cur->right); } ++i; }
-    }
-    return root;
-}
-//__USER__
-int main() {
-    using N = optional<int>;
-    {
-        auto r = pathSum(build({5,4,8,11,N{},13,4,7,2,N{},N{},5,1}), 22);
-        vector<vector<int>> want = {{5,4,11,2},{5,8,4,5}};
-        if (r != want) { std::puts("case1"); return 1; }
-    }
-    {
-        if (!pathSum(build({1,2,3}), 5).empty()) { std::puts("case2"); return 1; }
-    }
-    {
-        if (!pathSum(build({}), 0).empty()) { std::puts("case3"); return 1; }
-    }
-    {
-        auto r = pathSum(build({1,2}), 1);
-        if (!r.empty()) { std::puts("case4"); return 1; }
-    }
-    {
-        auto r = pathSum(build({-2,N{},-3}), -5);
-        vector<vector<int>> want = {{-2,-3}};
-        if (r != want) { std::puts("case5"); return 1; }
-    }
-    std::puts("PASS");
-}
-```
-
-**Editorial:** Depth-first search carrying both the running path and the remaining target. On entering a node we append it and subtract its value; at a leaf we save a copy of the path only if the remainder is zero; on exit we pop to backtrack so unrelated branches never share nodes. Building each qualifying path costs its length. O(n^2) worst case for copying paths, O(h) auxiliary space.
 
 ## challenge: Merge Two Binary Trees
 tags: tree, dfs, recursion
@@ -27226,6 +28630,1400 @@ int main() {
 
 **Editorial:** A freelist is a Treiber stack in disguise, and the interesting design decision is storing *indices* rather than pointers. The `next` links live in a side array `next_[]` indexed by slot number, and `head_` is a plain `int`, so `alloc`/`free` are the same load-check-CAS loops as the pointer stack but operate on small integers. Two payoffs: allocation is O(1) with zero `malloc`, and — because an `int` index is not a reusable heap address — you dodge the worst of the pointer stack's **ABA problem** and its reclamation hazard (there is no node to free; the storage is the pool itself, which outlives every operation). ABA can still bite in principle if a slot is popped, pushed, and re-popped between one thread's load and CAS, so production allocators fold a version tag into a double-width `head_` (a packed `{index, tag}` swapped with a 64-bit or `cmpxchg16b` CAS); this single-threaded version doesn't need it. Minimal-correct ordering: `alloc`'s successful CAS is `acquire` so a reused slot's contents (written by the previous owner before it called `free`) are visible, and `free`'s CAS is `release` to publish them — a release/acquire pair through `head_`. The failing legs are `relaxed`. `alloc` returning `-1` on an empty list is the graceful "pool exhausted" signal a fixed-size design must always provide.
 
+## challenge: One slot, one cache line
+tags: cache, alignment, layout
+track: hft
+difficulty: easy
+
+Define a market-data slot struct `MdSlot` that occupies exactly one 64-byte cache line and is 64-byte aligned, with fields in this exact order: `uint64_t seq`, `int64_t price`, `int32_t qty`, `uint32_t flags`. The compiler must place `seq` at offset 0, `price` at 8, `qty` at 16, `flags` at 20, with the rest of the line as tail padding. In an array of slots each element then starts on a fresh line, so a core reading slot `i` never drags slot `i+1`'s bytes into its cache — and a writer to slot `i+1` never invalidates the reader's line.
+
+Constraints: `sizeof(MdSlot) == 64`, `alignof(MdSlot) == 64`, offsets exactly 0/8/16/20. No bit-fields; no manual `char pad[...]` member required.
+
+Example: with `MdSlot slots[4];`, `&slots[1]` is exactly 64 bytes past `&slots[0]` and every element address is a multiple of 64.
+
+hint: `alignas(64)` on the struct raises its alignment requirement, and `sizeof` is always a multiple of `alignof` — so the tail padding to 64 bytes comes for free.
+hint: Order members largest-first (8, 8, 4, 4 bytes) so natural alignment yields offsets 0, 8, 16, 20 with no interior gaps.
+hint: You never need to spell out the padding bytes: `struct alignas(64) MdSlot { ... };` forces `sizeof(MdSlot)` up to 64 by itself.
+
+```cpp
+// starter
+#include <cstdint>
+// Define MdSlot here: uint64_t seq, int64_t price, int32_t qty, uint32_t flags.
+// It must occupy exactly one 64-byte cache line and be 64-byte aligned.
+```
+
+```cpp
+struct alignas(64) MdSlot {
+    uint64_t seq;     // offset 0
+    int64_t  price;   // offset 8
+    int32_t  qty;     // offset 16
+    uint32_t flags;   // offset 20
+    // bytes 24..63 are tail padding, supplied by alignas(64)
+};
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+#include <cstddef>
+//__USER__
+static_assert(sizeof(MdSlot) == 64, "must occupy exactly one cache line");
+static_assert(alignof(MdSlot) == 64, "must be cache-line aligned");
+static_assert(offsetof(MdSlot, seq) == 0, "seq at offset 0");
+static_assert(offsetof(MdSlot, price) == 8, "price at offset 8");
+static_assert(offsetof(MdSlot, qty) == 16, "qty at offset 16");
+static_assert(offsetof(MdSlot, flags) == 20, "flags at offset 20");
+int main() {
+    static MdSlot slots[4] = {};
+    for (int i = 0; i < 4; ++i) {
+        if (reinterpret_cast<uintptr_t>(&slots[i]) % 64 != 0) {
+            std::printf("slot %d is not 64-byte aligned\n", i); return 1;
+        }
+    }
+    if (reinterpret_cast<uintptr_t>(&slots[1]) - reinterpret_cast<uintptr_t>(&slots[0]) != 64) {
+        std::puts("array stride is not 64 bytes"); return 1;
+    }
+    slots[2].seq = 7; slots[2].price = -12345; slots[2].qty = 100; slots[2].flags = 3;
+    if (slots[2].seq != 7 || slots[2].price != -12345 || slots[2].qty != 100 || slots[2].flags != 3) {
+        std::puts("field round-trip failed"); return 1;
+    }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The cache line (64 bytes on x86 and most ARM servers) is the unit of transfer and of coherence: when any byte in a line is written, every other core's copy of that whole line is invalidated. If two slots straddle one line, a writer updating slot 1 stalls a reader of slot 0 even though they touch disjoint data. `alignas(64)` fixes this structurally: it raises the struct's alignment to 64, and because the language guarantees `sizeof` is a multiple of `alignof` (arrays must tile), the compiler pads the struct to exactly 64 bytes — every array element owns a whole line. Ordering members largest-first (two 8-byte, then two 4-byte fields) packs them at offsets 0/8/16/20 with zero interior padding, keeping all the payload in the first 24 bytes so a single load of the line's start captures everything. `static_assert` + `offsetof` turn these layout assumptions into compile-time contracts — in a trading system you assert layout at build time, not discover it in a latency histogram.
+
+## challenge: False-sharing-free counter array
+tags: cache, false-sharing, layout
+track: hft
+difficulty: medium
+
+Per-thread statistics counters that sit next to each other in memory destroy each other's cache lines: every increment by one thread invalidates the line in every other core. Fix it structurally. Implement `PaddedCounter` — a `uint64_t value` that owns a full 64-byte cache line — and `Counters`, a fixed bank of 8 of them with `void add(size_t i, uint64_t d)`, `uint64_t get(size_t i) const`, and `uint64_t total() const`. Adjacent counters must never share a line.
+
+Constraints: `sizeof(PaddedCounter) == 64` and `alignof(PaddedCounter) == 64`; `0 <= i < 8`; counters start at zero; `add`/`get` are O(1) array indexing (no map, no hash).
+
+Example: `Counters c; c.add(0,5); c.add(7,2); c.add(0,1);` then `c.get(0) == 6`, `c.get(7) == 2`, `c.total() == 8`. In `PaddedCounter pair[2];`, `&pair[1].value` is exactly 64 bytes past `&pair[0].value`.
+
+hint: `alignas(64)` on the struct does two jobs at once: it aligns the first instance to a line boundary and rounds `sizeof` up to 64, so array elements land on distinct lines.
+hint: A manual `char pad[56]` after the value also works, but the invariant you actually need is `sizeof == 64` — let the compiler do the padding.
+hint: `Counters` is just `PaddedCounter slots_[8]` behind bounds-free O(1) indexing; `total()` walks the 8 slots.
+
+```cpp
+// starter
+#include <cstdint>
+#include <cstddef>
+// struct PaddedCounter { uint64_t value; ... };  // one full cache line
+// class Counters {  // bank of 8 padded counters, all starting at 0
+//     void add(size_t i, uint64_t d);
+//     uint64_t get(size_t i) const;
+//     uint64_t total() const;
+// };
+```
+
+```cpp
+struct alignas(64) PaddedCounter {
+    uint64_t value = 0;
+};
+
+class Counters {
+public:
+    void add(size_t i, uint64_t d) { slots_[i].value += d; }
+    uint64_t get(size_t i) const { return slots_[i].value; }
+    uint64_t total() const {
+        uint64_t t = 0;
+        for (const PaddedCounter& s : slots_) t += s.value;
+        return t;
+    }
+private:
+    PaddedCounter slots_[8];
+};
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+#include <cstddef>
+//__USER__
+static_assert(sizeof(PaddedCounter) == 64, "counter must own a full cache line");
+static_assert(alignof(PaddedCounter) == 64, "counter must be line aligned");
+int main() {
+    PaddedCounter pair[2];
+    uintptr_t d = reinterpret_cast<uintptr_t>(&pair[1].value)
+                - reinterpret_cast<uintptr_t>(&pair[0].value);
+    if (d != 64) { std::printf("adjacent values %u bytes apart, want 64\n", (unsigned)d); return 1; }
+    if (reinterpret_cast<uintptr_t>(&pair[0]) % 64 != 0) { std::puts("not line aligned"); return 1; }
+
+    Counters c;
+    for (size_t i = 0; i < 8; ++i) {
+        if (c.get(i) != 0) { std::printf("counter %zu not zero-initialized\n", i); return 1; }
+    }
+    c.add(0, 5); c.add(7, 2); c.add(0, 1); c.add(3, 100);
+    if (c.get(0) != 6)  { std::puts("get(0) wrong"); return 1; }
+    if (c.get(7) != 2)  { std::puts("get(7) wrong"); return 1; }
+    if (c.get(3) != 100){ std::puts("get(3) wrong"); return 1; }
+    if (c.get(1) != 0)  { std::puts("get(1) should be untouched"); return 1; }
+    if (c.total() != 108) { std::printf("total=%llu want 108\n", (unsigned long long)c.total()); return 1; }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** False sharing is coherence traffic without actual sharing: eight plain `uint64_t` counters fit in one 64-byte line, so when thread A increments counter 0, the MESI protocol invalidates the line in the core running thread B, which was only ever touching counter 1. Each increment becomes a cross-core round trip (~40–100 ns) instead of an L1 hit (~1 ns) — a 50–100x slowdown that profiles as "memory bound" with no obvious culprit. The fix costs only space: give each counter its own line. `alignas(64)` guarantees both the alignment of the first element and, because `sizeof` must be a multiple of `alignof`, the 64-byte stride of every element — no fragile hand-counted `char pad[56]`. The `static_assert`s make the layout a compile-time contract so a colleague adding a field can't silently reintroduce sharing. C++17's `std::hardware_destructive_interference_size` names the constant, though many shops pin 64 explicitly (and use 128 on CPUs that prefetch line pairs). The same pattern protects SPSC queue head/tail indices and per-core sequence numbers.
+
+## challenge: AoS to SoA for the hot loop
+tags: cache, simd, data-layout
+track: hft
+difficulty: medium
+
+Quotes arrive as an array of structs: `struct Quote { int64_t price; int32_t qty; int32_t pad; };` (16 bytes each). A hot loop that only needs prices and quantities still drags every struct's full 16 bytes through the cache and can't vectorize cleanly. Split the data into parallel arrays. Implement `void toSoA(const Quote* q, size_t n, int64_t* prices, int32_t* qtys)` that scatters the AoS input into two dense arrays, and `int64_t notionalSum(const int64_t* prices, const int32_t* qtys, size_t n)` that returns the sum of `price * qty` over the SoA form in a single pass.
+
+Constraints: `n` up to 10^6; every product and the total fit in `int64_t`; `prices`/`qtys` are caller-provided buffers of length `n`; `notionalSum` must be one linear pass with no extra allocation.
+
+Example: quotes `{(100,2),(101,3),(-50,7)}` produce `prices == [100,101,-50]`, `qtys == [2,3,7]`, and `notionalSum == 100*2 + 101*3 + (-50)*7 == 153`.
+
+hint: `toSoA` is a single loop copying `q[i].price` and `q[i].qty` into position `i` of each output array — the win is in the layout, not in clever code.
+hint: In `notionalSum`, widen before multiplying: `prices[i]` is already `int64_t`, so `prices[i] * qtys[i]` is a 64-bit multiply — accumulate into an `int64_t`.
+hint: Keep both loops free of branches and function calls so the compiler can unroll and vectorize them.
+
+```cpp
+// starter
+#include <cstdint>
+#include <cstddef>
+struct Quote { int64_t price; int32_t qty; int32_t pad; };
+void toSoA(const Quote* q, size_t n, int64_t* prices, int32_t* qtys);
+int64_t notionalSum(const int64_t* prices, const int32_t* qtys, size_t n);
+```
+
+```cpp
+struct Quote { int64_t price; int32_t qty; int32_t pad; };
+
+void toSoA(const Quote* q, size_t n, int64_t* prices, int32_t* qtys) {
+    for (size_t i = 0; i < n; ++i) {
+        prices[i] = q[i].price;
+        qtys[i]   = q[i].qty;
+    }
+}
+
+int64_t notionalSum(const int64_t* prices, const int32_t* qtys, size_t n) {
+    int64_t total = 0;
+    for (size_t i = 0; i < n; ++i) {
+        total += prices[i] * qtys[i];
+    }
+    return total;
+}
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+#include <cstddef>
+//__USER__
+int main() {
+    Quote q[5] = {
+        {100, 2, 0}, {101, 3, 0}, {-50, 7, 0}, {99, 0, 0}, {1000000, 1000, 0},
+    };
+    int64_t prices[5] = {};
+    int32_t qtys[5] = {};
+    toSoA(q, 5, prices, qtys);
+    for (size_t i = 0; i < 5; ++i) {
+        if (prices[i] != q[i].price) { std::printf("prices[%zu] wrong\n", i); return 1; }
+        if (qtys[i] != q[i].qty)     { std::printf("qtys[%zu] wrong\n", i); return 1; }
+    }
+    int64_t want = 0;
+    for (size_t i = 0; i < 5; ++i) want += q[i].price * (int64_t)q[i].qty;
+    int64_t got = notionalSum(prices, qtys, 5);
+    if (got != want) { std::printf("notionalSum=%lld want %lld\n", (long long)got, (long long)want); return 1; }
+    if (notionalSum(prices, qtys, 0) != 0) { std::puts("empty sum must be 0"); return 1; }
+    toSoA(q, 0, prices, qtys);  // n == 0 must be a no-op
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Layout decides bandwidth. In AoS, a loop that reads `price` and `qty` streams 16 bytes per quote but uses 12 — and worse, the fields it wants sit at a 16-byte stride, so a 64-byte cache line delivers only 4 quotes and the vectorizer must emit gather/shuffle sequences to pack values into SIMD lanes. In SoA, `prices[]` is a dense `int64_t` stream and `qtys[]` a dense `int32_t` stream: every byte fetched is used, hardware prefetchers see two perfectly sequential streams, and `notionalSum` compiles to straight-line SIMD (widen 4 qtys, multiply into 64-bit lanes, add) with no shuffles. The transform itself costs one pass, which is why real systems don't transform at all — feed handlers write SoA (or column-oriented) layouts from the start, and this exercise is the argument for that design. Rule of thumb: structure your storage around your loops, not around your nouns; AoS is for objects you handle one at a time, SoA is for fields you scan a million at a time.
+
+## challenge: Branchless min/max scan
+tags: simd, branch-prediction, hot-path
+track: hft
+difficulty: easy
+
+Find the minimum and maximum of an array in one pass with no unpredictable branches. Implement `MinMax scanMinMax(const int32_t* a, size_t n)` returning `struct MinMax { int32_t mn; int32_t mx; }`. Write the loop body as pure value selects (`x < mn ? x : mn`) — never as `if (x < mn) mn = x;` with early-outs or logging — so the compiler can lower it to conditional moves and vector min/max instructions. On random data an `if`-based scan mispredicts constantly; a select-based scan runs at memory speed.
+
+Constraints: `1 <= n <= 10^6`. Single pass, O(1) extra space, no sorting, no early exit.
+
+Example: `scanMinMax([7,-3,9,0], 4)` returns `{mn: -3, mx: 9}`. `scanMinMax([5], 1)` returns `{5, 5}`.
+
+hint: Seed both `mn` and `mx` with `a[0]`, then fold the remaining elements — that handles `n == 1` and all-equal arrays for free.
+hint: `mn = x < mn ? x : mn;` is a select on values (both sides are just values, no side effects) — compilers turn it into `cmov` scalar or `pminsd`/`pmaxsd` vector ops.
+hint: Keep the loop body two selects and nothing else: no prints, no `if` statements, no function calls that could block vectorization.
+
+```cpp
+// starter
+#include <cstdint>
+#include <cstddef>
+struct MinMax { int32_t mn; int32_t mx; };
+MinMax scanMinMax(const int32_t* a, size_t n);
+```
+
+```cpp
+struct MinMax { int32_t mn; int32_t mx; };
+
+MinMax scanMinMax(const int32_t* a, size_t n) {
+    int32_t mn = a[0];
+    int32_t mx = a[0];
+    for (size_t i = 1; i < n; ++i) {
+        int32_t x = a[i];
+        mn = x < mn ? x : mn;   // value select, not a control branch
+        mx = x > mx ? x : mx;
+    }
+    return {mn, mx};
+}
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+#include <cstddef>
+#include <climits>
+//__USER__
+int main() {
+    int32_t single[] = {5};
+    int32_t equal3[] = {3, 3, 3};
+    int32_t up[]     = {1, 2, 3, 4, 5};
+    int32_t down[]   = {5, 4, 3, 2, 1};
+    int32_t wild[]   = {7, -3, INT_MAX, 0, INT_MIN, 42};
+    struct { const int32_t* a; size_t n; int32_t mn, mx; } cases[] = {
+        {single, 1, 5, 5},
+        {equal3, 3, 3, 3},
+        {up,     5, 1, 5},
+        {down,   5, 1, 5},
+        {wild,   6, INT_MIN, INT_MAX},
+    };
+    for (auto& c : cases) {
+        MinMax r = scanMinMax(c.a, c.n);
+        if (r.mn != c.mn || r.mx != c.mx) {
+            std::printf("got {%d,%d} want {%d,%d}\n", r.mn, r.mx, c.mn, c.mx);
+            return 1;
+        }
+    }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The distinction is control dependency versus data dependency. `if (x < mn) mn = x;` makes the instruction stream depend on the data: the branch predictor must guess, and on random input "is this a new minimum" is guessed wrong often early on (each mispredict flushes ~15–20 cycles of pipeline). `mn = x < mn ? x : mn;` computes both possibilities and selects — a `cmov` in scalar code — so there is nothing to predict. More importantly for throughput, a select-only loop body is exactly what auto-vectorizers need: clang and gcc compile this loop to `pminsd`/`pmaxsd` (or NEON `smin`/`smax`), processing 4–8 elements per cycle with the min/max lattice folded horizontally once at the end. Any side effect inside the conditional (a store, a call, an early `return`) would force real branches and kill the transform. Seeding with `a[0]` instead of `INT_MAX`/`INT_MIN` sentinels is a small robustness bonus: it works for any value range without assuming sentinels are unreachable.
+
+## challenge: Sum with four independent accumulators
+tags: ilp, simd, hot-path
+track: hft
+difficulty: medium
+
+A naive `total += a[i]` loop is a single serial dependency chain: each add must wait for the previous one, so the CPU's multiple ALUs sit idle. Implement `int64_t sum4(const int32_t* a, size_t n)` that sums the array using four independent 64-bit accumulators — `s0..s3`, each fed by every 4th element — then combines them at the end, with a scalar tail loop for the leftover `n % 4` elements. Same answer, but the four chains run in parallel through the pipeline.
+
+Constraints: `0 <= n <= 10^6`; elements are arbitrary `int32_t`; the true sum fits in `int64_t` (accumulate in 64-bit — a 32-bit accumulator would overflow). Exactly one pass over the data.
+
+Example: `sum4([3,-1,4,-1,5,9,-2], 7) == 17`. `sum4([], 0) == 0`.
+
+hint: Main loop strides by 4 while `i + 4 <= n`: `s0 += a[i]; s1 += a[i+1]; s2 += a[i+2]; s3 += a[i+3];` — no accumulator reads another's result inside the loop.
+hint: Finish leftovers with a plain loop into `s0`, then return `(s0 + s1) + (s2 + s3)` — a balanced reduction tree.
+hint: Each `int32_t` element must be widened into an `int64_t` accumulator; declare `s0..s3` as `int64_t` and the conversion is implicit.
+
+```cpp
+// starter
+#include <cstdint>
+#include <cstddef>
+int64_t sum4(const int32_t* a, size_t n);
+```
+
+```cpp
+int64_t sum4(const int32_t* a, size_t n) {
+    int64_t s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+    size_t i = 0;
+    for (; i + 4 <= n; i += 4) {
+        s0 += a[i];
+        s1 += a[i + 1];
+        s2 += a[i + 2];
+        s3 += a[i + 3];
+    }
+    for (; i < n; ++i) s0 += a[i];   // tail: 0..3 leftover elements
+    return (s0 + s1) + (s2 + s3);
+}
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+#include <cstddef>
+//__USER__
+static int32_t big[100000];
+int main() {
+    int32_t a[] = {3, -1, 4, -1, 5, 9, -2};
+    for (size_t n = 0; n <= 7; ++n) {   // every tail length 0..3, plus n==0
+        int64_t want = 0;
+        for (size_t i = 0; i < n; ++i) want += a[i];
+        int64_t got = sum4(a, n);
+        if (got != want) { std::printf("n=%zu got %lld want %lld\n", n, (long long)got, (long long)want); return 1; }
+    }
+    for (int i = 0; i < 100000; ++i) big[i] = (i % 2) ? 2000000000 : -1000000000;
+    int64_t want = 0;
+    for (int i = 0; i < 100000; ++i) want += big[i];   // 5e13: overflows int32 by far
+    int64_t got = sum4(big, 100000);
+    if (got != want) { std::printf("big got %lld want %lld\n", (long long)got, (long long)want); return 1; }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** This is instruction-level parallelism made explicit. An add has ~1 cycle latency, but a modern core can *issue* 3–4 adds per cycle — the naive loop can't exploit that because `total += a[i]` forms one serial chain: iteration i+1's add consumes iteration i's result. Four accumulators create four independent chains, so the scheduler keeps 4 adds in flight and throughput approaches the load bandwidth limit rather than the add-latency limit. This is exactly the transform auto-vectorizers and `-ffast-math` reassociation perform for floats; for integers the compiler may already do it at `-O2`/`-O3`, but interviewers want you to know *why* it works, because the same reasoning applies where compilers can't help: chained FP sums (reassociation changes rounding, so the compiler must preserve your chain), latency-bound hash loops, and pointer chases. The reduction tree `(s0+s1)+(s2+s3)` finishes in 2 dependent steps instead of 3. Widening to `int64_t` per-accumulator also removes the overflow trap: 100k elements of ±2·10^9 exceed `int32_t` range a thousandfold.
+
+## challenge: Branch-free clamp over an array
+tags: simd, branch-prediction, hot-path
+track: hft
+difficulty: easy
+
+Risk checks clamp order sizes and prices into `[lo, hi]` for millions of values per second. Implement `void clampAll(int32_t* a, size_t n, int32_t lo, int32_t hi)` that clamps every element in place — written branch-free: the loop body must be two value selects (`x < lo ? lo : x`, then `x > hi ? hi : x`), not `if`/`else if` statements. Selects lower to min/max instructions and let the whole loop vectorize; branches on unpredictable data flush the pipeline element after element.
+
+Constraints: `lo <= hi`; `0 <= n <= 10^6`; in-place, single pass, no early exit, no `if` statements in the loop body.
+
+Example: with `lo = -5, hi = 5`: `[-100, -5, 0, 7, 5]` becomes `[-5, -5, 0, 5, 5]`. With `lo == hi == 0` every element becomes `0`.
+
+hint: Load once, select twice, store once: `int32_t x = a[i]; x = x < lo ? lo : x; x = x > hi ? hi : x; a[i] = x;`
+hint: Apply the lower bound first, then the upper — with `lo <= hi` the order gives the correct result for every input.
+hint: Both selects have plain values on both arms (no side effects), which is exactly the shape compilers turn into `pmaxsd`/`pminsd` over 4–8 lanes at a time.
+
+```cpp
+// starter
+#include <cstdint>
+#include <cstddef>
+void clampAll(int32_t* a, size_t n, int32_t lo, int32_t hi);
+```
+
+```cpp
+void clampAll(int32_t* a, size_t n, int32_t lo, int32_t hi) {
+    for (size_t i = 0; i < n; ++i) {
+        int32_t x = a[i];
+        x = x < lo ? lo : x;   // max(x, lo)
+        x = x > hi ? hi : x;   // min(x, hi)
+        a[i] = x;
+    }
+}
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+#include <cstddef>
+#include <climits>
+//__USER__
+static void refClamp(const int32_t* in, int32_t* out, size_t n, int32_t lo, int32_t hi) {
+    for (size_t i = 0; i < n; ++i) {
+        int32_t x = in[i];
+        if (x < lo) x = lo;
+        if (x > hi) x = hi;
+        out[i] = x;
+    }
+}
+static bool runCase(const int32_t* in, size_t n, int32_t lo, int32_t hi) {
+    int32_t work[16], want[16];
+    for (size_t i = 0; i < n; ++i) work[i] = in[i];
+    refClamp(in, want, n, lo, hi);
+    clampAll(work, n, lo, hi);
+    for (size_t i = 0; i < n; ++i) {
+        if (work[i] != want[i]) {
+            std::printf("i=%zu got %d want %d (lo=%d hi=%d)\n", i, work[i], want[i], lo, hi);
+            return false;
+        }
+    }
+    return true;
+}
+int main() {
+    int32_t data[] = {INT_MIN, -100, -5, -1, 0, 1, 5, 7, 100, INT_MAX};
+    if (!runCase(data, 10, -5, 5)) return 1;
+    if (!runCase(data, 10, 0, 0)) return 1;                 // lo == hi
+    if (!runCase(data, 10, INT_MIN, INT_MAX)) return 1;     // identity
+    if (!runCase(data, 0, -5, 5)) return 1;                 // empty
+    if (!runCase(data, 1, 3, 9)) return 1;                  // single element
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Clamping is the canonical "unpredictable branch" workload: whether an element is below, inside, or above the band is data-dependent, so an `if (x < lo) ... else if (x > hi) ...` loop mispredicts on mixed input and each mispredict costs ~15–20 cycles — often more than the useful work in the entire iteration. Writing the body as two selects removes control flow entirely: `x < lo ? lo : x` is `max(x, lo)` and `x > hi ? hi : x` is `min(x, hi)`, and both gcc and clang lower the loop to packed `pmaxsd`/`pminsd` (or NEON `smax`/`smin`), clamping 4–8 elements per instruction with zero mispredict exposure. The order matters only for correctness bookkeeping: applying `max` with `lo` first, then `min` with `hi`, is correct whenever `lo <= hi` (this is also exactly how `std::clamp` composes). The general lesson: on hot paths, convert *control* dependencies into *data* dependencies whenever both arms are cheap pure values — the CPU is far better at streaming computation than at guessing your data.
+
+## challenge: Branchless select with an all-ones mask
+tags: branch-prediction, bit-tricks, hot-path
+track: hft
+difficulty: easy
+
+Implement `uint64_t select64(bool take_a, uint64_t a, uint64_t b)` that returns `a` when `take_a` is true and `b` otherwise — with no `if`, no ternary, no branches at all. Build a mask that is all-ones when the condition is true and all-zeros when false, then combine. This is the hand-rolled `cmov`: when the condition is unpredictable (e.g. "did the order cross the spread?"), a mispredicted branch costs more than the whole computation.
+
+Constraints: any `uint64_t` values for `a` and `b`; straight-line code — only arithmetic and bitwise ops on the bool and the operands.
+
+Example: `select64(true, 10, 20) == 10`, `select64(false, 10, 20) == 20`, `select64(true, 0xFFFFFFFFFFFFFFFF, 0) == 0xFFFFFFFFFFFFFFFF`.
+
+hint: A `bool` converts to integer 0 or 1; you need it as 0 or `0xFFFF...F` — unsigned negation does it: `0 - 1` wraps to all ones.
+hint: `uint64_t m = 0ull - static_cast<uint64_t>(take_a);` then pick with `(a & m) | (b & ~m)`.
+hint: An equivalent with one fewer op: `b ^ ((a ^ b) & m)` — when `m` is all ones the XORs cancel to `a`, when zero it stays `b`.
+
+```cpp
+// starter
+#include <cstdint>
+uint64_t select64(bool take_a, uint64_t a, uint64_t b);
+```
+
+```cpp
+uint64_t select64(bool take_a, uint64_t a, uint64_t b) {
+    uint64_t m = 0ull - static_cast<uint64_t>(take_a);  // true -> all ones, false -> 0
+    return (a & m) | (b & ~m);
+}
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+//__USER__
+int main() {
+    struct { bool c; uint64_t a, b, want; } cases[] = {
+        {true,  10u, 20u, 10u},
+        {false, 10u, 20u, 20u},
+        {true,  0xFFFFFFFFFFFFFFFFull, 0u, 0xFFFFFFFFFFFFFFFFull},
+        {false, 0xFFFFFFFFFFFFFFFFull, 0u, 0u},
+        {true,  0u, 0xFFFFFFFFFFFFFFFFull, 0u},
+        {false, 0u, 0xFFFFFFFFFFFFFFFFull, 0xFFFFFFFFFFFFFFFFull},
+        {true,  0xDEADBEEFCAFEBABEull, 0x0123456789ABCDEFull, 0xDEADBEEFCAFEBABEull},
+        {false, 0xDEADBEEFCAFEBABEull, 0x0123456789ABCDEFull, 0x0123456789ABCDEFull},
+        {true,  7u, 7u, 7u},   // equal operands
+    };
+    for (auto& c : cases) {
+        uint64_t got = select64(c.c, c.a, c.b);
+        if (got != c.want) {
+            std::printf("select64(%d,%llx,%llx)=%llx want %llx\n",
+                        (int)c.c, (unsigned long long)c.a, (unsigned long long)c.b,
+                        (unsigned long long)got, (unsigned long long)c.want);
+            return 1;
+        }
+    }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The core trick is manufacturing a full-width mask from a 1-bit condition: `bool` converts to 0 or 1, and unsigned negation `0 - x` wraps modulo 2^64, so 1 becomes `0xFFFF...F` and 0 stays 0 (perfectly defined for unsigned types — no UB). With the mask in hand, `(a & m) | (b & ~m)` muxes bitwise between the operands; the XOR form `b ^ ((a ^ b) & m)` does it in three ops. Why bother when `cond ? a : b` exists? For a plain value ternary the compiler usually emits `cmov` anyway — but "usually" is doing heavy lifting: surround it with other code and the optimizer may prefer a branch, and on an unpredictable condition each mispredict flushes ~15–20 cycles of pipeline. The mask form *guarantees* straight-line code: constant latency, no predictor state, no timing variation — which also makes it a staple of constant-time cryptography, where a data-dependent branch is an information leak. Know both spellings; reach for the mask when the condition is coin-flip unpredictable and the latency budget is single-digit nanoseconds.
+
+## challenge: Partition, then the branch is free
+tags: branch-prediction, hot-path
+track: hft
+difficulty: medium
+
+The famous interview riddle — "why is processing a sorted array faster?" — is branch prediction. The production fix is to group data by branch outcome once, so every downstream pass is perfectly predictable. Implement `size_t partitionBelow(int32_t* a, size_t n, int32_t pivot)`: reorder `a` in place so every element `< pivot` comes before every element `>= pivot`, and return the number of elements `< pivot`. Order within each group is unconstrained.
+
+Constraints: `0 <= n <= 10^6`; in place, O(n) time, O(1) extra space, single pass.
+
+Example: `a = [5,1,9,3,7]`, `pivot = 5` → returns `2`; the array becomes some permutation like `[1,3,9,5,7]` where the first 2 elements are `< 5` and the rest are `>= 5`. Elements equal to the pivot belong to the second group.
+
+hint: Keep a write cursor `w` for the "below" region; scan `i` left to right and when `a[i] < pivot`, swap `a[i]` with `a[w]` and advance `w`.
+hint: The invariant: at every step `a[0..w)` are all `< pivot` and `a[w..i)` are all `>= pivot` — when the scan ends, `w` is your return value.
+hint: Swapping an element with itself (when `i == w`) is harmless — don't special-case it; the branch you'd add costs more than the redundant swap.
+
+```cpp
+// starter
+#include <cstdint>
+#include <cstddef>
+size_t partitionBelow(int32_t* a, size_t n, int32_t pivot);
+```
+
+```cpp
+size_t partitionBelow(int32_t* a, size_t n, int32_t pivot) {
+    size_t w = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (a[i] < pivot) {
+            int32_t t = a[w];
+            a[w] = a[i];
+            a[i] = t;
+            ++w;
+        }
+    }
+    return w;
+}
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+#include <cstddef>
+#include <algorithm>
+//__USER__
+static bool verify(int32_t* a, size_t n, int32_t pivot, const int32_t* orig, const char* name) {
+    size_t k = partitionBelow(a, n, pivot);
+    size_t wantK = 0;
+    for (size_t i = 0; i < n; ++i) wantK += (orig[i] < pivot) ? 1u : 0u;
+    if (k != wantK) { std::printf("%s: returned %zu want %zu\n", name, k, wantK); return false; }
+    for (size_t i = 0; i < k; ++i)
+        if (!(a[i] < pivot)) { std::printf("%s: a[%zu]=%d not < pivot\n", name, i, a[i]); return false; }
+    for (size_t i = k; i < n; ++i)
+        if (a[i] < pivot) { std::printf("%s: a[%zu]=%d should be >= pivot\n", name, i, a[i]); return false; }
+    int32_t s1[16], s2[16];
+    std::copy(a, a + n, s1);
+    std::copy(orig, orig + n, s2);
+    std::sort(s1, s1 + n);
+    std::sort(s2, s2 + n);
+    if (!std::equal(s1, s1 + n, s2)) { std::printf("%s: multiset changed\n", name); return false; }
+    return true;
+}
+int main() {
+    { int32_t a[] = {5,1,9,3,7,3,2,8}; int32_t o[8]; std::copy(a,a+8,o); if (!verify(a,8,5,o,"mixed")) return 1; }
+    { int32_t a[] = {1,2,3}; int32_t o[3]; std::copy(a,a+3,o); if (!verify(a,3,10,o,"all below")) return 1; }
+    { int32_t a[] = {7,8,9}; int32_t o[3]; std::copy(a,a+3,o); if (!verify(a,3,0,o,"none below")) return 1; }
+    { int32_t a[] = {4,4,4,4}; int32_t o[4]; std::copy(a,a+4,o); if (!verify(a,4,4,o,"all equal pivot")) return 1; }
+    { int32_t a[] = {-3,0,-1,2}; int32_t o[4]; std::copy(a,a+4,o); if (!verify(a,4,0,o,"negatives")) return 1; }
+    { int32_t a[1] = {0}; int32_t o[1] = {0}; if (!verify(a,0,5,o,"empty")) return 1; }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The write-cursor (Lomuto-style) partition maintains a simple invariant — `a[0..w)` holds everything seen so far that is `< pivot`, `a[w..i)` everything that isn't — and each element is examined exactly once with at most one swap, so it's O(n)/O(1) and cache-perfect (two forward-moving pointers the prefetcher loves). The performance story is why this routine exists at all: a downstream loop like `if (x < threshold) hot_path(x);` over *random* data mispredicts ~50% of the time at ~15–20 cycles per miss, which famously makes summing a sorted array several times faster than an unsorted one. Partitioning is the cheaper cousin of sorting — one linear pass buys you two homogeneous ranges where the branch is either always-taken or never-taken, i.e. free. In a trading system this shows up as splitting messages into adds/cancels before processing, or separating in-band from out-of-band prices. For the partition loop itself, `w += (a[i] < pivot)` with an unconditional conditional-swap makes even *this* pass branchless — worth knowing when the partition is the hot loop. `std::partition` does the same job; know what's inside it.
+
+## challenge: Message length: table, not switch
+tags: branch-prediction, dispatch, hot-path
+track: hft
+difficulty: medium
+
+An ITCH-style feed parser must map a message type byte to its wire length before it can advance to the next message — on every single packet. Implement `uint8_t msgLength(uint8_t type)` for this dictionary: `'A'` (add) → 36, `'E'` (execute) → 31, `'X'` (cancel) → 23, `'D'` (delete) → 19, `'U'` (replace) → 34, `'P'` (trade) → 44; any other byte → 0. No `switch`, no `if` chain: build a 256-entry `constexpr` table at compile time and make the function body a single array load.
+
+Constraints: the table must be `constexpr` (built at compile time, stored in read-only data); `msgLength` contains exactly one indexed load and no control flow; input is any byte 0–255.
+
+Example: `msgLength('A') == 36`, `msgLength('P') == 44`, `msgLength('Z') == 0`, `msgLength(0) == 0`.
+
+hint: An immediately-invoked `constexpr` lambda builds the table cleanly: `constexpr auto kLen = []{ std::array<uint8_t,256> t{}; ...; return t; }();` — value-initialization zeroes all 256 slots first.
+hint: Assign only the six known types (`t['A'] = 36;` etc.); every unknown byte stays at the zero the initialization gave it.
+hint: `uint8_t` indexes cover 0–255 exactly, so `kLen[type]` needs no bounds check — the domain of the input *is* the domain of the table.
+
+```cpp
+// starter
+#include <cstdint>
+#include <array>
+uint8_t msgLength(uint8_t type);
+```
+
+```cpp
+constexpr auto kLen = [] {
+    std::array<uint8_t, 256> t{};   // all zeros: unknown types map to 0
+    t['A'] = 36;
+    t['E'] = 31;
+    t['X'] = 23;
+    t['D'] = 19;
+    t['U'] = 34;
+    t['P'] = 44;
+    return t;
+}();
+
+uint8_t msgLength(uint8_t type) {
+    return kLen[type];
+}
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+#include <array>
+//__USER__
+int main() {
+    struct { uint8_t type; uint8_t want; } cases[] = {
+        {'A', 36}, {'E', 31}, {'X', 23}, {'D', 19}, {'U', 34}, {'P', 44},
+        {'Z', 0}, {'a', 0}, {'p', 0}, {0, 0}, {255, 0}, {' ', 0},
+    };
+    for (auto& c : cases) {
+        uint8_t got = msgLength(c.type);
+        if (got != c.want) {
+            std::printf("msgLength(%d)=%d want %d\n", (int)c.type, (int)got, (int)c.want);
+            return 1;
+        }
+    }
+    unsigned known = 0;
+    for (int t = 0; t < 256; ++t) known += (msgLength((uint8_t)t) != 0) ? 1u : 0u;
+    if (known != 6) { std::printf("%u nonzero entries, want exactly 6\n", known); return 1; }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** A `switch` over sparse byte values compiles to either a compare-and-branch chain or a jump table — and a jump table is an *indirect branch*, which the predictor must guess by target. A market-data stream interleaves adds, executes, and cancels unpredictably, so that indirect branch mispredicts constantly, costing ~15–20 cycles per message before you've parsed a single field. The dense lookup table replaces all control flow with one data load: 256 bytes is four cache lines, hot forever in L1, so the lookup is ~4–5 cycles with perfectly flat latency — no best case, no worst case. Building it with an immediately-invoked `constexpr` lambda means zero runtime initialization: the table is baked into `.rodata` at compile time, and mistakes like a wrong length are still checkable with `static_assert`. Sizing the table to exactly 256 entries and indexing with `uint8_t` eliminates the bounds check by construction — the type system proves the index is in range. This pattern (byte → attribute via flat table) is everywhere in feed handlers: message lengths, field offsets, per-type dispatch indices; when handlers are functions, the same table stores function pointers, trading the switch for one indirect call that at least the branch-target buffer can learn per-site.
+
+## challenge: Round to powers of two, both ways
+tags: bit-tricks, hot-path
+track: hft
+difficulty: medium
+
+Ring buffer capacities, arena sizes, and hash table sizes must be powers of two so that indexing is a mask instead of a division. Implement both directions for 64-bit values, without loops over bits and without `std::bit_ceil`/`std::bit_floor`/builtins: `uint64_t floorPow2(uint64_t x)` returns the largest power of two `<= x` (define `floorPow2(0) == 0`), and `uint64_t ceilPow2(uint64_t x)` returns the smallest power of two `>= x` for `1 <= x <= 2^63`.
+
+Constraints: O(1) — a fixed ladder of shifts and ORs (6 steps for 64 bits); no loops, no lookup tables, no builtins.
+
+Example: `floorPow2(1000) == 512`, `floorPow2(1024) == 1024`, `floorPow2(0) == 0`. `ceilPow2(1000) == 1024`, `ceilPow2(1024) == 1024`, `ceilPow2(1) == 1`.
+
+hint: The bit-smear ladder `x |= x >> 1; x |= x >> 2; ... x |= x >> 32;` propagates the most significant set bit into every position below it, turning `x` into `2^(k+1) - 1` where `k` is the MSB index.
+hint: After smearing, `x - (x >> 1)` leaves just the top bit — that's the floor. For zero input the smear leaves zero, so the definition `floorPow2(0) == 0` falls out for free.
+hint: For the ceiling, subtract 1 *before* smearing and add 1 after — the decrement is what makes exact powers of two map to themselves instead of doubling.
+
+```cpp
+// starter
+#include <cstdint>
+uint64_t floorPow2(uint64_t x);
+uint64_t ceilPow2(uint64_t x);
+```
+
+```cpp
+uint64_t floorPow2(uint64_t x) {
+    x |= x >> 1;
+    x |= x >> 2;
+    x |= x >> 4;
+    x |= x >> 8;
+    x |= x >> 16;
+    x |= x >> 32;
+    return x - (x >> 1);   // keep only the top set bit
+}
+
+uint64_t ceilPow2(uint64_t x) {
+    x -= 1;                // so exact powers stay put
+    x |= x >> 1;
+    x |= x >> 2;
+    x |= x >> 4;
+    x |= x >> 8;
+    x |= x >> 16;
+    x |= x >> 32;
+    return x + 1;
+}
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+//__USER__
+int main() {
+    struct { uint64_t x, want; } fl[] = {
+        {0ull, 0ull}, {1ull, 1ull}, {2ull, 2ull}, {3ull, 2ull}, {5ull, 4ull},
+        {6ull, 4ull}, {1000ull, 512ull}, {1024ull, 1024ull}, {1025ull, 1024ull},
+        {(1ull << 63), (1ull << 63)}, {(1ull << 63) + 5ull, (1ull << 63)},
+        {0xFFFFFFFFFFFFFFFFull, (1ull << 63)},
+    };
+    for (auto& c : fl) {
+        uint64_t got = floorPow2(c.x);
+        if (got != c.want) {
+            std::printf("floorPow2(%llu)=%llu want %llu\n",
+                        (unsigned long long)c.x, (unsigned long long)got, (unsigned long long)c.want);
+            return 1;
+        }
+    }
+    struct { uint64_t x, want; } ce[] = {
+        {1ull, 1ull}, {2ull, 2ull}, {3ull, 4ull}, {5ull, 8ull}, {1000ull, 1024ull},
+        {1023ull, 1024ull}, {1024ull, 1024ull}, {1025ull, 2048ull},
+        {(1ull << 62) + 1ull, (1ull << 63)}, {(1ull << 63), (1ull << 63)},
+    };
+    for (auto& c : ce) {
+        uint64_t got = ceilPow2(c.x);
+        if (got != c.want) {
+            std::printf("ceilPow2(%llu)=%llu want %llu\n",
+                        (unsigned long long)c.x, (unsigned long long)got, (unsigned long long)c.want);
+            return 1;
+        }
+    }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The smear ladder is a doubling propagation: after `x |= x >> 1` the MSB covers 2 positions, after `>> 2` it covers 4, and after the `>> 32` step every bit at or below the MSB is set — six steps handle 64 bits because coverage doubles each time. From the smeared value `2^(k+1)-1`, the floor is `x - (x >> 1)` (all-ones minus all-ones-shifted leaves the top bit), and the ceiling comes from the classic decrement/smear/increment: subtracting 1 first means an exact power like 1024 smears from 1023 and increments right back to 1024, while 1025 smears from 1024 up to 2047 and lands on 2048. Watch the domain edges — `ceilPow2` overflows to 0 for `x > 2^63` (no 64-bit power of two exists above it), which is why the constraint stops at `2^63`; and `floorPow2(0) == 0` falls out naturally since zero smears to zero. Hardware does this with one `lzcnt`, and C++20 exposes it as `std::bit_ceil`/`std::bit_floor` — but the ladder is what you write where those don't reach (constexpr-in-C++17 code, GPUs, verification models), and deriving it shows you understand *why* power-of-two capacities matter: `index & (cap - 1)` replaces a 20–40 cycle divide with a 1-cycle AND on every queue operation.
+
+## challenge: Enumerate every submask
+tags: bit-tricks, hot-path
+track: hft
+difficulty: medium
+
+A bitmask encodes a set — venues to route to, flags on an order, feature combinations. Sometimes you must visit every *subset* of that set. Implement `uint64_t foldSubmasks(uint32_t mask)` that visits every submask `s` of `mask` (every `s` with `s & mask == s`, including `mask` itself and `0`) exactly once, in decreasing numeric order starting from `mask` and ending at `0`, folding each into an accumulator as `acc = acc * 3 + s` (with `acc` starting at 0, arithmetic in `uint64_t`), and returns the final `acc`.
+
+Constraints: must run in O(2^k) where `k = popcount(mask)` — scanning all values from `mask` down to 0 and testing each is disallowed. For the tests, `popcount(mask) <= 8`.
+
+Example: `foldSubmasks(0b101)` visits `5, 4, 1, 0` in that order: acc = 5, then 5*3+4 = 19, then 19*3+1 = 58, then 58*3+0 = 174 — returns `174`. `foldSubmasks(0) == 0` (visits just `0`).
+
+hint: The classic enumeration: start at `s = mask`, and step with `s = (s - 1) & mask` — the decrement borrows through the trailing zeros, the AND throws away everything outside the mask.
+hint: That step visits all submasks in strictly decreasing numeric order and reaches `0` last; loop `while (true)`, fold, and break *after* processing `s == 0` (stepping from 0 would wrap back to `mask`).
+hint: Fold first, test for zero second: `acc = acc*3 + s; if (s == 0) break; s = (s - 1) & mask;`
+
+```cpp
+// starter
+#include <cstdint>
+uint64_t foldSubmasks(uint32_t mask);
+```
+
+```cpp
+uint64_t foldSubmasks(uint32_t mask) {
+    uint64_t acc = 0;
+    uint32_t s = mask;
+    while (true) {
+        acc = acc * 3 + s;
+        if (s == 0) break;
+        s = (s - 1) & mask;
+    }
+    return acc;
+}
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+//__USER__
+static uint64_t reference(uint32_t mask) {
+    // Brute force: scan every value from mask down to 0, keep those inside mask.
+    uint64_t acc = 0;
+    for (uint64_t v = mask; ; --v) {
+        if ((v & mask) == v) acc = acc * 3 + v;
+        if (v == 0) break;
+    }
+    return acc;
+}
+int main() {
+    if (foldSubmasks(0u) != 0ull) { std::puts("mask 0 must fold to 0"); return 1; }
+    if (foldSubmasks(1u) != 3ull) { std::puts("mask 1 must fold to 3"); return 1; }      // 1 then 0
+    if (foldSubmasks(0b101u) != 174ull) { std::puts("mask 0b101 must fold to 174"); return 1; }
+    uint32_t masks[] = {0b11u, 0b1101u, 0xFFu, 0x92u, 0b110100000000u};
+    for (uint32_t m : masks) {
+        uint64_t got = foldSubmasks(m);
+        uint64_t want = reference(m);
+        if (got != want) {
+            std::printf("foldSubmasks(0x%x)=%llu want %llu\n",
+                        m, (unsigned long long)got, (unsigned long long)want);
+            return 1;
+        }
+    }
+    // spread-bits case: brute reference would scan 2^31 values, so the
+    // expected fold (submasks 0x80000001, 0x80000000, 1, 0) is precomputed —
+    // a submask walk visits 4 values here, the naive scan 2 billion
+    if (foldSubmasks(0x80000001u) != 77309411358ull) {
+        std::puts("foldSubmasks(0x80000001) wrong"); return 1;
+    }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The step `s = (s - 1) & mask` is subset decrement: subtracting 1 clears the lowest set bit of `s` and sets every bit below it, and ANDing with `mask` keeps only the positions that belong to the set — the net effect is "the next smaller integer that is still a submask." Because every step strictly decreases `s` and never skips a valid submask (any submask between `s-1` and the result would survive the AND), the walk visits all `2^k` subsets of a k-bit mask in decreasing numeric order, ending at 0. The subtle trap is termination: from `s == 0` the step wraps to `mask` and loops forever, so you process 0 first, *then* break — the do-while-style structure in the solution. Cost is exactly `2^k` iterations regardless of how the k bits are spread across the word (the harness's `0x80000001` case), versus `mask+1` iterations for the naive scan — for 8 bits spread over a 32-bit word that's 256 versus 2 billion. This enumeration underpins subset-sum DP ("sum over submasks", total work 3^k across all masks), routing over venue combinations, and exhaustive small-set searches where the set is already a bitmask in a register.
+
+## challenge: Midpoint without overflow
+tags: integer-arithmetic, bit-tricks, hot-path
+track: hft
+difficulty: medium
+
+`(a + b) / 2` is a latent bug: the sum overflows for large operands — signed overflow is undefined behavior — and even when it doesn't, integer division truncates toward zero, not toward negative infinity. Implement `int32_t floorMid(int32_t a, int32_t b)` returning exactly `floor((a + b) / 2)` for *all* `int32_t` pairs, including `INT_MAX` with `INT_MAX` and mixed signs, with no overflow, no UB, and no widening to 64-bit.
+
+Constraints: any `int32_t` values for `a` and `b`; 32-bit arithmetic only (no `int64_t` anywhere); branchless — shifts, ANDs, adds.
+
+Example: `floorMid(3, 4) == 3`, `floorMid(-3, -4) == -4` (floor of -3.5), `floorMid(INT_MAX, INT_MAX) == INT_MAX`, `floorMid(INT_MAX, INT_MIN) == -1`.
+
+hint: Halve each operand separately: since C++20, `a >> 1` on a signed value is guaranteed arithmetic shift, which is exactly `floor(a / 2)` — for negatives too (unlike `a / 2`, which truncates toward zero).
+hint: `(a >> 1) + (b >> 1)` can never overflow (each half is at most half the range), but it drops half a unit from each odd operand — half plus half is the whole unit you're missing.
+hint: The two dropped halves add back to exactly 1 precisely when *both* operands are odd: add `a & b & 1`.
+
+```cpp
+// starter
+#include <cstdint>
+int32_t floorMid(int32_t a, int32_t b);
+```
+
+```cpp
+int32_t floorMid(int32_t a, int32_t b) {
+    // a>>1 is floor(a/2) in C++20 (arithmetic shift); the halves each drop 0.5
+    // when odd, and those two halves sum to a whole 1 exactly when both are odd.
+    return (a >> 1) + (b >> 1) + (a & b & 1);
+}
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+#include <climits>
+//__USER__
+static int32_t ref(int32_t a, int32_t b) {
+    long long s = (long long)a + (long long)b;
+    return (int32_t)(s >> 1);   // arithmetic shift of the wide sum == floor((a+b)/2)
+}
+int main() {
+    struct { int32_t a, b; } cases[] = {
+        {INT_MAX, INT_MAX}, {INT_MIN, INT_MIN}, {INT_MAX, INT_MIN}, {INT_MIN, INT_MAX},
+        {3, 4}, {4, 3}, {3, 5}, {-3, -4}, {-3, 4}, {3, -4}, {-3, -5},
+        {0, 0}, {-1, 0}, {0, -1}, {1, 1}, {-1, -1},
+        {INT_MAX - 1, INT_MAX}, {INT_MIN, INT_MIN + 1}, {INT_MIN + 1, INT_MAX},
+    };
+    for (auto& c : cases) {
+        int32_t got = floorMid(c.a, c.b);
+        int32_t want = ref(c.a, c.b);
+        if (got != want) {
+            std::printf("floorMid(%d,%d)=%d want %d\n", c.a, c.b, got, want);
+            return 1;
+        }
+    }
+    for (int a = -9; a <= 9; ++a) {
+        for (int b = -9; b <= 9; ++b) {
+            if (floorMid(a, b) != ref(a, b)) {
+                std::printf("floorMid(%d,%d)=%d want %d\n", a, b, floorMid(a, b), ref(a, b));
+                return 1;
+            }
+        }
+    }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** Decompose each operand as `2*(x >> 1) + (x & 1)`: the shift is floor-halving (C++20 finally *guarantees* arithmetic right shift on signed values — before that it was implementation-defined, though universal in practice), and the low bit is the remainder. Then `floor((a+b)/2) = (a>>1) + (b>>1) + floor(((a&1)+(b&1))/2)`, and that last term is 1 only when both low bits are 1 — i.e. `a & b & 1`. Every intermediate stays comfortably in range: each half is within `[-2^30, 2^30)`, so the sum can't overflow, and no UB is possible. Contrast the classics that fail: `(a+b)/2` overflows (the bug that famously lurked in binary searches for decades as `mid = (lo+hi)/2`); `a + (b-a)/2` fixes overflow only when the difference fits, and rounds toward `a`, not toward negative infinity; `std::midpoint` is overflow-safe but also rounds toward `a` — a different contract. Floor-rounding matters when the midpoint feeds price arithmetic that must be monotonic: floor is order-preserving under negation offsets, truncation is not. Three ALU ops, branchless, and correct on the entire domain — exactly the kind of primitive you prove once and reuse everywhere.
+
+## challenge: Aligned bump allocator
+tags: memory, allocator, hot-path
+track: hft
+difficulty: medium
+
+`malloc` takes locks, maintains free lists, and can syscall — none of which belongs on a hot path. The trading-system workhorse is the bump (arena) allocator: allocation is a pointer add, deallocation is wholesale `reset()` after the tick. Implement `class Arena` over a caller-provided buffer: `Arena(unsigned char* buf, size_t cap)`, `void* allocate(size_t size, size_t align)` (align is a power of two; returns a pointer aligned to `align`, or `nullptr` if it doesn't fit — *without* consuming any space on failure), `void reset()`, and `size_t used() const` (bytes consumed including alignment padding).
+
+Constraints: the caller guarantees `buf` is aligned at least as strictly as any `align` it will request (the harness passes a 64-byte-aligned buffer and aligns up to 64). `allocate` is O(1): align the offset up with bit arithmetic, no loops, no searching. A failed allocation must leave the arena unchanged. An allocation may exactly reach `cap`.
+
+Example: with a 256-byte arena: `allocate(1,1)` returns `buf` (used = 1); `allocate(8,8)` returns `buf+8` (offset bumped from 1 to 8; used = 16); `allocate(1000,1)` returns `nullptr` (used still 16); `reset()` makes `used() == 0` and the next allocation returns `buf` again.
+
+hint: Align the *offset*, not the pointer: `aligned = (off + (align - 1)) & ~(align - 1)` rounds up to the next multiple of a power of two; since `buf` itself is aligned, `buf + aligned` is too.
+hint: Check for space without overflow: test `aligned > cap` first, then `size > cap - aligned` — the naive `aligned + size > cap` can wrap for huge `size`.
+hint: Only commit state (`off = aligned + size`) after both checks pass — failure must be side-effect-free.
+
+```cpp
+// starter
+#include <cstddef>
+class Arena {
+public:
+    Arena(unsigned char* buf, size_t cap);
+    void* allocate(size_t size, size_t align);  // aligned pointer, or nullptr if it doesn't fit
+    void reset();                               // free everything at once
+    size_t used() const;                        // bytes consumed, padding included
+};
+```
+
+```cpp
+class Arena {
+public:
+    Arena(unsigned char* buf, size_t cap) : buf_(buf), cap_(cap), off_(0) {}
+
+    void* allocate(size_t size, size_t align) {
+        size_t aligned = (off_ + (align - 1)) & ~(align - 1);
+        if (aligned > cap_ || size > cap_ - aligned) return nullptr;  // overflow-safe
+        void* p = buf_ + aligned;
+        off_ = aligned + size;
+        return p;
+    }
+
+    void reset() { off_ = 0; }
+    size_t used() const { return off_; }
+
+private:
+    unsigned char* buf_;
+    size_t cap_;
+    size_t off_;
+};
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+#include <cstddef>
+//__USER__
+alignas(64) static unsigned char buf[256];
+int main() {
+    Arena a(buf, sizeof(buf));
+    if (a.used() != 0) { std::puts("fresh arena must be empty"); return 1; }
+
+    void* p1 = a.allocate(1, 1);
+    if (p1 != buf) { std::puts("first alloc must start at buf"); return 1; }
+    if (a.used() != 1) { std::puts("used after 1-byte alloc must be 1"); return 1; }
+
+    void* p2 = a.allocate(8, 8);
+    if (p2 != buf + 8) { std::puts("8-aligned alloc must land at offset 8"); return 1; }
+    if (a.used() != 16) { std::puts("used must include alignment padding"); return 1; }
+
+    void* p3 = a.allocate(4, 16);
+    if (p3 != buf + 16) { std::puts("16-aligned alloc must land at offset 16"); return 1; }
+    if (reinterpret_cast<uintptr_t>(p3) % 16 != 0) { std::puts("pointer not 16-aligned"); return 1; }
+    if (a.used() != 20) { std::puts("used must be 20"); return 1; }
+
+    if (a.allocate(1000, 1) != nullptr) { std::puts("oversized alloc must fail"); return 1; }
+    if (a.used() != 20) { std::puts("failed alloc must not consume space"); return 1; }
+
+    void* p4 = a.allocate(236, 4);   // 20 is 4-aligned; 20 + 236 == 256: exact fit allowed
+    if (p4 != buf + 20) { std::puts("exact-fit alloc must succeed"); return 1; }
+    if (a.used() != 256) { std::puts("arena must now be full"); return 1; }
+    if (a.allocate(1, 1) != nullptr) { std::puts("full arena must refuse"); return 1; }
+
+    a.reset();
+    if (a.used() != 0) { std::puts("reset must empty the arena"); return 1; }
+    void* p5 = a.allocate(64, 64);
+    if (p5 != buf) { std::puts("post-reset alloc must start at buf again"); return 1; }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** A bump allocator is the fastest allocation scheme that exists: round the offset up, compare, add — three ALU ops, no metadata per block, no locks, no free lists, and consecutive allocations are contiguous in memory (great for cache locality of related objects). Its contract is what makes it fast: you cannot free individual objects, only `reset()` the whole arena — which fits event-driven systems perfectly, where everything allocated while processing one packet dies when the packet is done ("per-tick arena"). The align-up idiom `(off + align-1) & ~(align-1)` works only for power-of-two `align` — the mask clears the low bits — and aligning the *offset* is valid because the base buffer is at least as aligned as any request, so alignment is preserved by addition. Two production-grade details the tests enforce: the space check must be overflow-safe (`size > cap - aligned` after checking `aligned <= cap`, since `aligned + size` can wrap `size_t`), and failure must be transactional — a `nullptr` return that also corrupted `off_` would poison every later allocation. `std::pmr::monotonic_buffer_resource` is this exact idea productized; writing one from scratch is a standing interview question because it exposes whether you understand alignment, overflow, and ownership at once.
+
+## challenge: Morton encode two 32-bit coordinates
+tags: bit-tricks, hot-path
+track: hft
+difficulty: hard
+
+Z-order (Morton) curves map 2D coordinates to a single index so that points close in 2D stay close in memory — used for spatial grids, quadtrees, and cache-friendly 2D tables. Implement `uint64_t mortonEncode(uint32_t x, uint32_t y)` that interleaves the bits: bit `i` of `x` goes to bit `2i` of the result (even positions), bit `i` of `y` goes to bit `2i+1` (odd positions). No per-bit loops: use the parallel-prefix mask ladder that spreads each 32-bit input into 64 bits in 5 fixed steps.
+
+Constraints: full 32-bit coordinate range; O(1) — a fixed sequence of shifts, ORs, and ANDs with the spreading mask constants; no loops, no tables, no builtins.
+
+Example: `mortonEncode(1, 0) == 1`, `mortonEncode(0, 1) == 2`, `mortonEncode(3, 0) == 5` (binary `101`), `mortonEncode(0, 3) == 10` (binary `1010`), `mortonEncode(0xFFFFFFFF, 0) == 0x5555555555555555`.
+
+hint: Write a helper that spreads one 32-bit value so its bits occupy the even positions of a 64-bit word, then combine: `spread(x) | (spread(y) << 1)`.
+hint: The spread halves the gap each step with magic masks: `v = (v | (v << 16)) & 0x0000FFFF0000FFFF; v = (v | (v << 8)) & 0x00FF00FF00FF00FF;` then masks `0x0F0F...`, `0x3333...`, `0x5555...`.
+hint: Each step moves the upper half of every block 2x its current gap to the left and the mask keeps exactly one half-block at each position — 16, 8, 4, 2, 1.
+
+```cpp
+// starter
+#include <cstdint>
+uint64_t mortonEncode(uint32_t x, uint32_t y);
+```
+
+```cpp
+static uint64_t spread(uint64_t v) {
+    // Spread the low 32 bits of v to the even bit positions of a 64-bit word.
+    v &= 0x00000000FFFFFFFFull;
+    v = (v | (v << 16)) & 0x0000FFFF0000FFFFull;
+    v = (v | (v << 8))  & 0x00FF00FF00FF00FFull;
+    v = (v | (v << 4))  & 0x0F0F0F0F0F0F0F0Full;
+    v = (v | (v << 2))  & 0x3333333333333333ull;
+    v = (v | (v << 1))  & 0x5555555555555555ull;
+    return v;
+}
+
+uint64_t mortonEncode(uint32_t x, uint32_t y) {
+    return spread(x) | (spread(y) << 1);
+}
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+//__USER__
+static uint64_t refEncode(uint32_t x, uint32_t y) {
+    uint64_t r = 0;
+    for (int i = 0; i < 32; ++i) {
+        r |= (uint64_t)((x >> i) & 1u) << (2 * i);
+        r |= (uint64_t)((y >> i) & 1u) << (2 * i + 1);
+    }
+    return r;
+}
+int main() {
+    struct { uint32_t x, y; uint64_t want; } fixed[] = {
+        {0u, 0u, 0ull},
+        {1u, 0u, 1ull},
+        {0u, 1u, 2ull},
+        {3u, 0u, 5ull},
+        {0u, 3u, 10ull},
+        {0xFFFFFFFFu, 0u, 0x5555555555555555ull},
+        {0u, 0xFFFFFFFFu, 0xAAAAAAAAAAAAAAAAull},
+        {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFFFFFFFFFull},
+    };
+    for (auto& c : fixed) {
+        uint64_t got = mortonEncode(c.x, c.y);
+        if (got != c.want) {
+            std::printf("mortonEncode(%u,%u)=%llx want %llx\n",
+                        c.x, c.y, (unsigned long long)got, (unsigned long long)c.want);
+            return 1;
+        }
+    }
+    struct { uint32_t x, y; } pairs[] = {
+        {0x12345678u, 0x9ABCDEF0u}, {0xDEADBEEFu, 0xCAFEBABEu},
+        {0x80000000u, 0x00000001u}, {0x00000001u, 0x80000000u}, {12345u, 67890u},
+    };
+    for (auto& p : pairs) {
+        uint64_t got = mortonEncode(p.x, p.y);
+        uint64_t want = refEncode(p.x, p.y);
+        if (got != want) {
+            std::printf("mortonEncode(%x,%x)=%llx want %llx\n",
+                        p.x, p.y, (unsigned long long)got, (unsigned long long)want);
+            return 1;
+        }
+    }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The spread is a parallel-prefix computation run in reverse: start with 32 bits packed at the bottom of a 64-bit word and, in each step, split every contiguous block in half and move the upper half left by the block's width — 16, then 8, 4, 2, 1 — so after five steps each original bit sits alone at an even position. The magic masks are the invariant keepers: after the shift-and-OR, each value appears twice (original and shifted); the mask (`0x0000FFFF0000FFFF`, then `0x00FF00FF...`, `0x0F0F...`, `0x3333...`, `0x5555...`) keeps exactly the copy that belongs at each position. Interleaving is then trivial: `x` on the even bits, `y` shifted onto the odd bits, OR them — the two spreads are independent, so a superscalar core overlaps them. Why Morton order matters for latency: a row-major 2D grid puts vertical neighbors a full row apart (guaranteed cache miss for large grids), while Z-order keeps any 2^k x 2^k tile in one contiguous memory range — that locality is why GPUs swizzle textures this way and why spatial indexes (and some order-book-by-(price, venue) grids) use it. On x86 with BMI2 the whole spread is one `pdep` instruction; this ladder is its portable, constexpr-able equivalent, and running it backwards (mask, then compact with shifts) gives you the decode.
+
+## challenge: Reverse the bits of a 64-bit word
+tags: bit-tricks, hot-path
+track: hft
+difficulty: hard
+
+Mirror a 64-bit word: bit 0 swaps with bit 63, bit 1 with bit 62, and so on. Implement `uint64_t reverseBits64(uint64_t v)` with the divide-and-conquer mask ladder — six fixed steps, no per-bit loop, no lookup tables, no builtins. Bit reversal is the index permutation at the heart of the FFT butterfly and appears in CRCs and LFSRs; the ladder technique itself (swap at doubling granularities) is a bit-manipulation staple interviewers reach for.
+
+Constraints: full 64-bit range; O(1) — exactly six shift/mask/OR rounds (or five plus a final rotate); straight-line code.
+
+Example: `reverseBits64(1) == 0x8000000000000000`, `reverseBits64(0x8000000000000000) == 1`, `reverseBits64(0xAAAAAAAAAAAAAAAA) == 0x5555555555555555`, `reverseBits64(0) == 0`.
+
+hint: Swap adjacent bits, then adjacent 2-bit pairs, then nibbles, bytes, 16-bit halves, and finally the two 32-bit halves — reversing blocks at every scale composes into a full mirror.
+hint: Each step is `v = ((v >> k) & M) | ((v & M) << k)` where `M` keeps the low half of every 2k-block: `0x5555...` for k=1, `0x3333...` for k=2, `0x0F0F...` for k=4, `0x00FF...` for k=8, `0x0000FFFF...` for k=16.
+hint: The last step needs no mask at all: `v = (v >> 32) | (v << 32)` swaps the halves in one rotate.
+
+```cpp
+// starter
+#include <cstdint>
+uint64_t reverseBits64(uint64_t v);
+```
+
+```cpp
+uint64_t reverseBits64(uint64_t v) {
+    v = ((v >> 1)  & 0x5555555555555555ull) | ((v & 0x5555555555555555ull) << 1);   // swap bits
+    v = ((v >> 2)  & 0x3333333333333333ull) | ((v & 0x3333333333333333ull) << 2);   // swap pairs
+    v = ((v >> 4)  & 0x0F0F0F0F0F0F0F0Full) | ((v & 0x0F0F0F0F0F0F0F0Full) << 4);   // swap nibbles
+    v = ((v >> 8)  & 0x00FF00FF00FF00FFull) | ((v & 0x00FF00FF00FF00FFull) << 8);   // swap bytes
+    v = ((v >> 16) & 0x0000FFFF0000FFFFull) | ((v & 0x0000FFFF0000FFFFull) << 16);  // swap 16-bit
+    v = (v >> 32) | (v << 32);                                                      // swap halves
+    return v;
+}
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+//__USER__
+static uint64_t refReverse(uint64_t v) {
+    uint64_t r = 0;
+    for (int i = 0; i < 64; ++i) {
+        r = (r << 1) | (v & 1u);
+        v >>= 1;
+    }
+    return r;
+}
+int main() {
+    struct { uint64_t v, want; } fixed[] = {
+        {0ull, 0ull},
+        {1ull, 0x8000000000000000ull},
+        {0x8000000000000000ull, 1ull},
+        {0xFFFFFFFFFFFFFFFFull, 0xFFFFFFFFFFFFFFFFull},
+        {0xAAAAAAAAAAAAAAAAull, 0x5555555555555555ull},
+        {0x5555555555555555ull, 0xAAAAAAAAAAAAAAAAull},
+        {0x00000000000000FFull, 0xFF00000000000000ull},
+    };
+    for (auto& c : fixed) {
+        uint64_t got = reverseBits64(c.v);
+        if (got != c.want) {
+            std::printf("reverseBits64(%llx)=%llx want %llx\n",
+                        (unsigned long long)c.v, (unsigned long long)got, (unsigned long long)c.want);
+            return 1;
+        }
+    }
+    uint64_t vals[] = {0x0123456789ABCDEFull, 0xF0F0F0F0F0F0F0F0ull, 0xDEADBEEFCAFEBABEull, 42ull};
+    for (uint64_t v : vals) {
+        if (reverseBits64(v) != refReverse(v)) { std::printf("mismatch on %llx\n", (unsigned long long)v); return 1; }
+        if (reverseBits64(reverseBits64(v)) != v) { std::puts("reverse must be an involution"); return 1; }
+    }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The key insight is that a full mirror factors into log2(64) = 6 independent block swaps: reversing a 64-bit string equals swapping its two 32-bit halves *and* reversing each half, and that recursion unrolls into "swap adjacent 1-bit blocks, then 2-bit, 4, 8, 16, 32" — in any order, since the steps commute. Each round is the two-mask exchange `((v >> k) & M) | ((v & M) << k)`: `M` selects the low half of every 2k-sized block, so the expression moves high halves down and low halves up simultaneously across the whole word — 64 swaps for the price of 5 ops. The final 32-bit step degenerates to a rotate because the mask would cover exactly half the word. Total: ~28 ALU ops, no branches, no memory — compare a naive 64-iteration loop (~200+ ops with a loop-carried dependency) or a 256-entry byte table (4 cache lines of L1 you'd rather spend on the order book). ARM has `rbit` doing this in one instruction; x86 doesn't, so the ladder is what fast FFT index permutation actually compiles to. The same exchange idiom generalizes: byte-swap (`bswap`) is the last three rounds only, and field-swaps within packed structs use the identical two-mask pattern.
+
+## challenge: Best bid from a price-level bitmap
+tags: order-book, bit-tricks, hot-path
+track: hft
+difficulty: hard
+
+Fast order books track which price levels are occupied with a bitmap: one bit per level, and "best bid" is the highest set bit. Implement `class LevelBitmap` over 1024 price levels (index 0..1023, higher index = higher price = better bid): `void set(int idx)`, `void clear(int idx)`, and `int highest() const` returning the highest set index, or `-1` when empty. Store the levels in sixteen `uint64_t` words. Finding the top bit within a word must be O(log bits) — a fixed halving search, no per-bit loop, no `std::countl_zero`/builtins.
+
+Constraints: `0 <= idx < 1024`; `set`/`clear` are O(1) (word index + mask); `highest` scans at most 16 words top-down and then does a 6-step floor-log2 inside the first non-empty word; `set`/`clear` are idempotent.
+
+Example: after `set(500); set(510); set(3);` → `highest() == 510`; after `clear(510);` → `highest() == 500`; after clearing all → `highest() == -1`.
+
+hint: Level `idx` lives in word `idx >> 6` at bit `idx & 63`: `words[idx >> 6] |= 1ull << (idx & 63)` to set, AND with the complement to clear.
+hint: For `highest()`, walk words from 15 down to 0; the first non-zero word contains the answer: `(w << 6) + floorLog2(words[w])`.
+hint: `floorLog2` by halving: `if (x >> 32) { n += 32; x >>= 32; }` then the same with 16, 8, 4, 2, 1 — six tests pin the top bit's index.
+
+```cpp
+// starter
+#include <cstdint>
+class LevelBitmap {
+public:
+    void set(int idx);      // mark price level idx occupied
+    void clear(int idx);    // mark it empty
+    int highest() const;    // highest occupied level, or -1 if none
+};
+```
+
+```cpp
+static int floorLog2(uint64_t x) {   // x != 0
+    int n = 0;
+    if (x >> 32) { n += 32; x >>= 32; }
+    if (x >> 16) { n += 16; x >>= 16; }
+    if (x >> 8)  { n += 8;  x >>= 8;  }
+    if (x >> 4)  { n += 4;  x >>= 4;  }
+    if (x >> 2)  { n += 2;  x >>= 2;  }
+    if (x >> 1)  { n += 1; }
+    return n;
+}
+
+class LevelBitmap {
+public:
+    void set(int idx)   { words_[idx >> 6] |=  (1ull << (idx & 63)); }
+    void clear(int idx) { words_[idx >> 6] &= ~(1ull << (idx & 63)); }
+    int highest() const {
+        for (int w = kWords - 1; w >= 0; --w) {
+            if (words_[w]) return (w << 6) + floorLog2(words_[w]);
+        }
+        return -1;
+    }
+private:
+    static constexpr int kWords = 16;   // 16 * 64 = 1024 levels
+    uint64_t words_[kWords] = {};
+};
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+//__USER__
+static bool expect(const LevelBitmap& b, int want, const char* what) {
+    int got = b.highest();
+    if (got != want) { std::printf("%s: highest()=%d want %d\n", what, got, want); return false; }
+    return true;
+}
+int main() {
+    LevelBitmap b;
+    if (!expect(b, -1, "empty book")) return 1;
+    b.set(0);
+    if (!expect(b, 0, "only level 0")) return 1;
+    b.set(63);
+    if (!expect(b, 63, "top of word 0")) return 1;
+    b.set(64);
+    if (!expect(b, 64, "bottom of word 1")) return 1;
+    b.set(500); b.set(510); b.set(3);
+    if (!expect(b, 510, "several levels")) return 1;
+    b.set(1023);
+    if (!expect(b, 1023, "top level")) return 1;
+    b.clear(1023);
+    if (!expect(b, 510, "clear top falls back")) return 1;
+    b.clear(510); b.clear(500);
+    if (!expect(b, 64, "clear across words")) return 1;
+    b.clear(64);
+    if (!expect(b, 63, "word boundary 64 -> 63")) return 1;
+    b.set(127); b.set(128);
+    if (!expect(b, 128, "127/128 straddle")) return 1;
+    b.clear(128);
+    if (!expect(b, 127, "fall back to 127")) return 1;
+    b.clear(127); b.clear(63); b.clear(3); b.clear(0);
+    if (!expect(b, -1, "emptied book")) return 1;
+    b.clear(5);   // clearing an already-clear level must be harmless
+    if (!expect(b, -1, "idempotent clear")) return 1;
+    b.set(200); b.set(200);   // idempotent set
+    if (!expect(b, 200, "idempotent set")) return 1;
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The bitmap is the classic answer to "how do you get O(1)-ish best-bid without a heap or a tree." A `std::map<price, level>` finds the best in O(log n) with pointer chases across scattered nodes — several cache misses each a hundred cycles. The bitmap is 128 bytes — two cache lines — that stay hot in L1 forever: `set`/`clear` are one shift, one mask, one RMW on a word (`idx >> 6` picks the word, `idx & 63` the bit — the same power-of-two indexing as ring buffers), and `highest()` is a top-down word scan plus a floor-log2. The halving `floorLog2` asks "is anything set in the upper half?" six times, each answer contributing one bit of the index — it's binary search over bit positions, and each test compiles to a shift, test, and conditional add (usually `cmov`). Hardware collapses the whole thing into one `bsr`/`lzcnt` (`std::countl_zero` in C++20), making the in-word part a single cycle. Production books add a *summary* word — bit `w` set iff `words[w] != 0` — so the scan itself becomes one more floor-log2 and `highest()` is truly constant-time; two levels of bitmap cover 4096 levels in three loads. Trade-off to name in an interview: bitmaps excel when the price universe is dense and bounded (equities near the touch); for sparse or unbounded ladders you fall back to trees or hashed levels.
+
+## challenge: Price ladder with incremental best tracking
+tags: order-book, cache, hot-path
+track: hft
+difficulty: hard
+
+The bid side of an order book, stored as a dense ladder: `qty[level]` for levels 0..1023, where a higher index is a better (higher) price. Implement `class BidLadder` with `void apply(int level, int64_t delta)` (add `delta` to the quantity at `level`; the caller guarantees quantity never goes negative), `int bestLevel() const` (highest level with nonzero quantity, `-1` if the book is empty), and `int64_t bestQty() const` (quantity at the best level, `0` if empty). The best must be maintained *incrementally*: `apply` is O(1) except when the current best empties, in which case it walks down to the next occupied level; the getters are O(1) reads.
+
+Constraints: `0 <= level < 1024`; quantities and deltas fit `int64_t`; no scanning in the getters; `apply` must not scan when the update doesn't touch the best (an add below the best, or a partial reduction anywhere).
+
+Example: `apply(500,+100); apply(510,+50);` → best is 510/50. `apply(510,-50);` empties the top → best falls back to 500/100. `apply(500,-100);` → empty book: `bestLevel() == -1`, `bestQty() == 0`.
+
+hint: Keep `int best_` alongside the array. After writing the new quantity: if it's now positive and `level > best_`, the best simply improves to `level`.
+hint: Only one case requires a scan: the quantity at `best_` just hit zero — walk `best_` downward while it points at an empty level (stopping at -1 for an empty book).
+hint: Order the guard carefully: `while (best_ >= 0 && qty_[best_] == 0) --best_;` — check the bound before indexing.
+
+```cpp
+// starter
+#include <cstdint>
+class BidLadder {
+public:
+    void apply(int level, int64_t delta);  // qty[level] += delta; maintain best
+    int bestLevel() const;                 // highest non-empty level, or -1
+    int64_t bestQty() const;               // qty at best, or 0
+};
+```
+
+```cpp
+class BidLadder {
+public:
+    void apply(int level, int64_t delta) {
+        int64_t q = qty_[level] + delta;
+        qty_[level] = q;
+        if (q > 0) {
+            if (level > best_) best_ = level;          // improvement: O(1)
+        } else if (level == best_) {
+            while (best_ >= 0 && qty_[best_] == 0) --best_;   // retreat: walk down
+        }
+    }
+    int bestLevel() const { return best_; }
+    int64_t bestQty() const { return best_ >= 0 ? qty_[best_] : 0; }
+private:
+    static constexpr int kLevels = 1024;
+    int64_t qty_[kLevels] = {};
+    int best_ = -1;
+};
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+//__USER__
+static bool expect(const BidLadder& b, int lvl, int64_t qty, const char* what) {
+    if (b.bestLevel() != lvl || b.bestQty() != qty) {
+        std::printf("%s: best=(%d,%lld) want (%d,%lld)\n", what,
+                    b.bestLevel(), (long long)b.bestQty(), lvl, (long long)qty);
+        return false;
+    }
+    return true;
+}
+int main() {
+    BidLadder b;
+    if (!expect(b, -1, 0, "fresh book")) return 1;
+    b.apply(500, 100);
+    if (!expect(b, 500, 100, "first add")) return 1;
+    b.apply(510, 50);
+    if (!expect(b, 510, 50, "better bid arrives")) return 1;
+    b.apply(505, 75);
+    if (!expect(b, 510, 50, "add below best keeps best")) return 1;
+    b.apply(510, 25);
+    if (!expect(b, 510, 75, "add at best updates qty")) return 1;
+    b.apply(510, -25);
+    if (!expect(b, 510, 50, "partial cancel keeps level")) return 1;
+    b.apply(510, -50);
+    if (!expect(b, 505, 75, "top empties, fall back one gap")) return 1;
+    b.apply(505, -75);
+    if (!expect(b, 500, 100, "fall back again")) return 1;
+    b.apply(500, -100);
+    if (!expect(b, -1, 0, "book empties")) return 1;
+    b.apply(0, 5);
+    if (!expect(b, 0, 5, "level 0 works")) return 1;
+    b.apply(1023, 7);
+    if (!expect(b, 1023, 7, "top level works")) return 1;
+    b.apply(1023, -7);
+    if (!expect(b, 0, 5, "long fall back 1023 -> 0")) return 1;
+    b.apply(0, -5);
+    if (!expect(b, -1, 0, "empty again")) return 1;
+    b.apply(300, 10);
+    if (!expect(b, 300, 10, "reuse after empty")) return 1;
+    std::puts("PASS");
+}
+```
+
+**Editorial:** This is the dense-array order book that fast equity feed handlers actually use: map price to a small integer index (price minus a base, divided by tick), keep quantities in a flat array, and carry the best as a cached index. The update taxonomy is the whole design: an add at or above the best and any partial reduction are O(1) — one array write plus a compare; the only structural event is "the best level just emptied," which triggers a downward walk to the next occupied level. That walk looks like the weak spot but rarely is: real markets cluster activity at and near the touch, so the gap below the vanished best is typically 1–2 ticks, and even a long walk streams through a contiguous `int64_t` array at 8 levels per cache line with the prefetcher ahead of you — compare a `std::map` book where *every* best-query chases red-black tree pointers across the heap. The previous challenge's bitmap is the standard upgrade when the walk must be bounded: keep a summary bitmap of occupied levels and the retreat becomes floor-log2 of two words, O(1) worst case. Note also what the guard order buys you: `best_ >= 0 && qty_[best_] == 0` short-circuits before indexing, so the empty-book case needs no sentinel level. Interviewers probe exactly these seams — the asymmetry of improve vs. retreat, and what data layout does to the "bad" case.
+
+## challenge: Modular exponentiation without overflow
+tags: integer-arithmetic, hot-path
+track: hft
+difficulty: hard
+
+Symbol hashing, Lehmer RNG streams, and integrity checks all need `base^exp mod m` for 64-bit operands — but `a * b` overflows `uint64_t` long before the modulus does, silently corrupting the result. Implement two functions with no 128-bit types and no overflow anywhere: `uint64_t mulmod(uint64_t a, uint64_t b, uint64_t m)` computing `(a * b) mod m` by binary (shift-and-add) multiplication, and `uint64_t modpow(uint64_t base, uint64_t exp, uint64_t m)` computing `base^exp mod m` by square-and-multiply on top of it. Define `x^0 == 1` (so `modpow(0, 0, m) == 1`), and any result mod 1 is 0.
+
+Constraints: `1 <= m < 2^63` (this bound is what makes overflow-free doubling possible — know why); any `a`, `b`, `base`, `exp`; `mulmod` is O(64), `modpow` is O(64) multiplies; use conditional subtraction, not `%`, inside the loops.
+
+Example: `modpow(2, 10, 1000) == 24`, `modpow(7, 0, 13) == 1`, `mulmod(2^40, 2^40, 2^61 - 1) == 2^19` (since `2^61 ≡ 1` mod `2^61 - 1`).
+
+hint: Russian-peasant multiplication: reduce `a`, `b` below `m` first; then for each low bit of `b`, conditionally add `a` into the result and double `a`, halving `b` each step — every add is of two values `< m`.
+hint: With `m < 2^63`, both `r + a` and `a + a` are `< 2^64`, so they can't wrap; restore the invariant with `if (x >= m) x -= m;` — one compare-subtract, never a division.
+hint: `modpow` is the same skeleton one level up: start `r = 1 % m` (handles `m == 1`), square `base` each step via `mulmod`, and multiply into `r` when the exponent bit is set.
+
+```cpp
+// starter
+#include <cstdint>
+uint64_t mulmod(uint64_t a, uint64_t b, uint64_t m);   // (a * b) % m, overflow-free
+uint64_t modpow(uint64_t base, uint64_t exp, uint64_t m);  // base^exp % m
+```
+
+```cpp
+uint64_t mulmod(uint64_t a, uint64_t b, uint64_t m) {
+    a %= m;
+    b %= m;
+    uint64_t r = 0;
+    while (b) {
+        if (b & 1) {
+            r += a;                    // r, a < m < 2^63: no wrap
+            if (r >= m) r -= m;
+        }
+        a += a;                        // double, staying reduced
+        if (a >= m) a -= m;
+        b >>= 1;
+    }
+    return r;
+}
+
+uint64_t modpow(uint64_t base, uint64_t exp, uint64_t m) {
+    uint64_t r = 1 % m;                // m == 1 -> everything is 0
+    base %= m;
+    while (exp) {
+        if (exp & 1) r = mulmod(r, base, m);
+        base = mulmod(base, base, m);
+        exp >>= 1;
+    }
+    return r;
+}
+```
+
+```cpp
+// harness
+#include <cstdio>
+#include <cstdint>
+//__USER__
+static uint64_t naivePow(uint64_t base, uint64_t exp, uint64_t m) {
+    // Only called with small operands: products stay far below 2^64.
+    uint64_t r = 1 % m;
+    base %= m;
+    for (uint64_t i = 0; i < exp; ++i) r = (r * base) % m;
+    return r;
+}
+int main() {
+    if (modpow(2, 10, 1000) != 24) { std::puts("2^10 mod 1000 must be 24"); return 1; }
+    if (modpow(7, 0, 13) != 1) { std::puts("x^0 must be 1"); return 1; }
+    if (modpow(5, 117, 1) != 0) { std::puts("mod 1 must be 0"); return 1; }
+    if (mulmod(0, 12345, 97) != 0) { std::puts("0 * x must be 0"); return 1; }
+    if (mulmod((1ull << 40), (1ull << 40), (1ull << 61) - 1) != (1ull << 19)) {
+        std::puts("2^80 mod (2^61-1) must be 2^19"); return 1;
+    }
+    for (uint64_t b = 0; b < 8; ++b) {
+        for (uint64_t e = 0; e < 8; ++e) {
+            uint64_t got = modpow(b, e, 1000003ull);
+            uint64_t want = naivePow(b, e, 1000003ull);
+            if (got != want) {
+                std::printf("modpow(%llu,%llu)=%llu want %llu\n",
+                            (unsigned long long)b, (unsigned long long)e,
+                            (unsigned long long)got, (unsigned long long)want);
+                return 1;
+            }
+        }
+    }
+    // Fermat: for prime p, 2^(p-1) == 1 (mod p)
+    if (modpow(2, 1000000006ull, 1000000007ull) != 1) { std::puts("Fermat check failed"); return 1; }
+    // Big modulus near 2^62: x^(a+b) == x^a * x^b (mod m) must hold exactly
+    uint64_t m0 = (1ull << 62) + 12345ull;
+    uint64_t x = 0x123456789ABCDEFull;
+    uint64_t lhs = modpow(x, 1000003ull + 777777ull, m0);
+    uint64_t rhs = mulmod(modpow(x, 1000003ull, m0), modpow(x, 777777ull, m0), m0);
+    if (lhs != rhs) { std::puts("exponent addition law violated at 2^62 scale"); return 1; }
+    std::puts("PASS");
+}
+```
+
+**Editorial:** The overflow analysis is the whole challenge. Once `a` and `b` are reduced below `m`, the loop maintains `r < m` and `a < m` as invariants; with `m < 2^63`, both `r + a` and `a + a` are strictly below `2^64`, so unsigned addition can't wrap — and since each sum is below `2m`, a single conditional subtract restores the invariant without ever touching the divider (a 64-bit `div` is 20–40 cycles; the compare-subtract pair is 1–2 and usually compiles to `cmov`). That bound is exactly why the contract stops at `2^63`: one bit of headroom is the price of the doubling trick. `mulmod` is Russian-peasant multiplication — decompose `b` into powers of two, accumulate `a * 2^i mod m` for each set bit — and `modpow` is the identical decomposition one level up: square-and-multiply over the exponent's bits, 64 squarings worst case, each of which is a 64-step mulmod, giving ~4096 simple ops for a full 64-bit exponentiation. `r = 1 % m` quietly handles the degenerate `m == 1` (everything is 0) and the `0^0 == 1` convention falls out of the loop never executing. In production you'd use `unsigned __int128` (gcc/clang) or Montgomery multiplication to make each product O(1); the shift-add ladder is the fully portable fallback — and the version you can write on a whiteboard while explaining, invariant by invariant, why no intermediate can ever overflow.
+
 ## challenge: Integer log2 (floor)
 tags: bit-tricks, fast-math
 track: hft
@@ -30240,6 +33038,620 @@ _check()
 
 **Editorial:** Load all values into a set for O(1) lookups. A number begins a consecutive run only if `n - 1` is absent, so from each such start you walk upward `n + 1, n + 2, ...` counting how far the run extends. Because every value is only ever walked as part of exactly one run, the total work is O(n) despite the nested loop, using O(n) space — beating the O(n log n) sort-based approach.
 
+## challenge: fix: Last page never prints
+tags: code-review, debugging, off-by-one
+track: python
+lang: python
+difficulty: easy
+
+Code review found a bug: printing pages 1–3 only ever produces pages 1 and 2, and printing a single page (5–5) produces nothing at all. Find and fix it — keep the function signature.
+
+hint: Look at how the sequence of page numbers is generated.
+hint: Classic off-by-one — which end of the interval does `range` include?
+hint: `range(a, b)` stops at `b - 1`; an inclusive upper bound needs `b + 1`.
+
+```python
+# starter
+def pages_to_print(first, last):
+    """Every page number from `first` to `last`, inclusive."""
+    if first > last:
+        return []
+    return list(range(first, last))
+```
+
+```python
+def pages_to_print(first, last):
+    """Every page number from `first` to `last`, inclusive."""
+    if first > last:
+        return []
+    return list(range(first, last + 1))
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert pages_to_print(1, 3) == [1, 2, 3], "last page missing"
+    assert pages_to_print(5, 5) == [5], "single-page job printed nothing"
+    assert pages_to_print(4, 2) == []
+    assert pages_to_print(0, 1) == [0, 1]
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** `range(first, last)` is half-open — it stops at `last - 1` — so the final page is always dropped, and a one-page request (`first == last`) yields an empty range. The fix is `range(first, last + 1)`. A reviewer spots this by checking interval endpoints against the docstring ("inclusive") and by mentally running the degenerate case `first == last`, which is where half-open/closed confusion always shows first.
+
+## challenge: fix: Blank lines survive the cleaner
+tags: code-review, debugging, strings
+track: python
+lang: python
+difficulty: easy
+
+Code review found a bug: the log cleaner still emits lines of pure whitespace, and the lines it keeps still carry their trailing newlines. Find and fix it — keep the function signature.
+
+hint: Watch what happens to each `line` inside the loop, statement by statement.
+hint: Strings are immutable — string methods never modify in place.
+hint: `line.strip()` computes a new string and returns it; if you don't bind the result, it's discarded.
+
+```python
+# starter
+def clean_lines(lines):
+    """Trim whitespace from each line; drop lines that are empty after trimming."""
+    cleaned = []
+    for line in lines:
+        line.strip()
+        if line:
+            cleaned.append(line)
+    return cleaned
+```
+
+```python
+def clean_lines(lines):
+    """Trim whitespace from each line; drop lines that are empty after trimming."""
+    cleaned = []
+    for line in lines:
+        line = line.strip()
+        if line:
+            cleaned.append(line)
+    return cleaned
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert clean_lines(["  alpha  ", "", "   ", "beta\n"]) == ["alpha", "beta"]
+    assert clean_lines(["\t\n", " "]) == []
+    assert clean_lines([]) == []
+    assert clean_lines(["ok"]) == ["ok"]
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Strings are immutable, so `line.strip()` cannot change `line` — it builds a new string and returns it, and here the return value was thrown away. The untouched `line` is then tested (a whitespace-only string is truthy) and appended verbatim. The fix is to rebind: `line = line.strip()`. Reviewers catch this by flagging any bare string-method call used as a statement — `s.strip()`, `s.replace(...)`, `s.upper()` on their own line are almost always bugs.
+
+## challenge: fix: Defaults drift after every request
+tags: code-review, debugging, aliasing
+track: python
+lang: python
+difficulty: easy
+
+Code review found a bug: after one request passes custom settings, every later request mysteriously sees those custom values baked into the shared defaults. Find and fix it — keep the function signature.
+
+hint: The docstring promises not to modify either argument — check whether that's true.
+hint: Assignment in Python never copies data; it only creates another name for the same object.
+hint: `settings = defaults` aliases the caller's dict, so `settings.update(...)` mutates the original — make a copy first.
+
+```python
+# starter
+def merge_settings(defaults, overrides):
+    """Combine `defaults` with per-request `overrides` (overrides win).
+
+    Must not modify either argument.
+    """
+    settings = defaults
+    settings.update(overrides)
+    return settings
+```
+
+```python
+def merge_settings(defaults, overrides):
+    """Combine `defaults` with per-request `overrides` (overrides win).
+
+    Must not modify either argument.
+    """
+    settings = dict(defaults)
+    settings.update(overrides)
+    return settings
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    defaults = {"theme": "light", "retries": 3}
+    out = merge_settings(defaults, {"theme": "dark"})
+    assert out == {"theme": "dark", "retries": 3}
+    assert defaults == {"theme": "light", "retries": 3}, "defaults were mutated"
+    out2 = merge_settings(defaults, {})
+    assert out2 == defaults and out2 is not defaults
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** `settings = defaults` does not copy anything — both names point at the same dict, so `settings.update(overrides)` writes the per-request overrides straight into the shared defaults, poisoning every subsequent call. The fix is to copy first: `settings = dict(defaults)` (or `defaults.copy()`, or `{**defaults, **overrides}`). Reviewers spot this by treating every `a = b` on a mutable value followed by mutation as a red flag, especially when a docstring or contract promises the inputs stay untouched.
+
+## challenge: fix: Dedupe remembers too much
+tags: code-review, debugging, mutable-default
+track: python
+lang: python
+difficulty: medium
+
+Code review found a bug: the first call works, but later calls silently drop items that were never in their own input — as if the function remembers previous batches. Find and fix it — keep the function signature.
+
+hint: Each call in isolation is correct; the bug only appears across multiple calls.
+hint: When is a default parameter value evaluated — per call, or once?
+hint: `seen=set()` is created once at `def` time and shared by every call that omits it; use a `None` sentinel and create the set inside.
+
+```python
+# starter
+def dedupe(items, seen=set()):
+    """Return `items` without duplicates, preserving first-seen order."""
+    out = []
+    for x in items:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+```
+
+```python
+def dedupe(items, seen=None):
+    """Return `items` without duplicates, preserving first-seen order."""
+    if seen is None:
+        seen = set()
+    out = []
+    for x in items:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert dedupe([1, 2, 1, 3]) == [1, 2, 3]
+    assert dedupe([3, 4, 4, 5]) == [3, 4, 5], "state leaked from a previous call"
+    assert dedupe(["a", "a"]) == ["a"]
+    assert dedupe([1, 1]) == [1], "state leaked from a previous call"
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Default values are evaluated exactly once, when the `def` statement runs — so the single `set()` object is shared by every call that doesn't pass `seen`, and each call inherits everything previous calls added to it. The second call drops `3` because the first call already "saw" it. The canonical fix is the `None` sentinel: default to `None` and build a fresh `set()` inside the body. Reviewers flag any mutable default (`[]`, `{}`, `set()`) on sight; the tell in the wild is call-order-dependent behavior.
+
+## challenge: fix: Version 1.10 releases before 1.9
+tags: code-review, debugging, sorting
+track: python
+lang: python
+difficulty: medium
+
+Code review found a bug: the changelog lists `1.10.0` *before* `1.9.0`, and `10.0.0` before `2.0.0` — newest releases are buried in the middle. Find and fix it — keep the function signature.
+
+hint: Print the sorted output for versions with multi-digit components.
+hint: What type are the things being compared, and how does that type order itself?
+hint: Strings compare character by character, so `"1.10" < "1.9"` — sort by a tuple of ints instead (`key=`).
+
+```python
+# starter
+def sort_versions(versions):
+    """Sort dotted version strings ascending: '1.9.0' comes before '1.10.0'."""
+    return sorted(versions)
+```
+
+```python
+def sort_versions(versions):
+    """Sort dotted version strings ascending: '1.9.0' comes before '1.10.0'."""
+    return sorted(versions, key=lambda v: tuple(int(part) for part in v.split(".")))
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert sort_versions(["1.10.0", "1.9.0", "1.2.3"]) == ["1.2.3", "1.9.0", "1.10.0"]
+    assert sort_versions(["10.0.0", "2.0.0"]) == ["2.0.0", "10.0.0"]
+    assert sort_versions(["0.9.1", "0.9.0"]) == ["0.9.0", "0.9.1"]
+    assert sort_versions([]) == []
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** The versions are strings, and strings sort lexicographically: comparing `"1.10.0"` with `"1.9.0"` reaches `'1' < '9'` at the third character and stops — so 1.10 lands before 1.9. The fix is a sort key that restores numeric meaning: split on dots and compare tuples of ints, `key=lambda v: tuple(int(p) for p in v.split("."))`. Reviewers should be suspicious whenever "numbers" arrive as strings (CSV fields, version tags, IDs) and get sorted or compared without conversion — the code looks right and even works on single-digit data.
+
+## challenge: fix: Every currency converts at the yen rate
+tags: code-review, debugging, closures
+track: python
+lang: python
+difficulty: medium
+
+Code review found a bug: converting 10 USD to euros returns 1550 — every converter in the map applies whichever rate happened to be last in the dict. Find and fix it — keep the function signature.
+
+hint: Each lambda looks correct alone; the problem is what they all have in common.
+hint: Closures capture variables, not the values those variables had when the lambda was created.
+hint: All the lambdas share the single loop variable `rate`, which ends the loop at its final value — freeze it per iteration with a default argument (`lambda usd, rate=rate: ...`).
+
+```python
+# starter
+def build_converters(rates):
+    """Map currency code -> function that converts a USD amount to that currency."""
+    converters = {}
+    for code, rate in rates.items():
+        converters[code] = lambda usd: usd * rate
+    return converters
+```
+
+```python
+def build_converters(rates):
+    """Map currency code -> function that converts a USD amount to that currency."""
+    converters = {}
+    for code, rate in rates.items():
+        converters[code] = lambda usd, rate=rate: usd * rate
+    return converters
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    conv = build_converters({"eur": 0.9, "gbp": 0.8, "jpy": 155.0})
+    assert abs(conv["eur"](10) - 9.0) < 1e-9, "eur converter used the wrong rate"
+    assert abs(conv["gbp"](10) - 8.0) < 1e-9, "gbp converter used the wrong rate"
+    assert abs(conv["jpy"](10) - 1550.0) < 1e-9
+    assert abs(conv["eur"](0) - 0.0) < 1e-9
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Python closures are late-binding: each lambda closes over the loop *variable* `rate`, not the value it held when the lambda was built. The loop finishes with `rate == 155.0`, so every converter reads that final value at call time. The standard fix is to capture the current value as a default argument — `lambda usd, rate=rate: usd * rate` — since defaults are evaluated at definition time; `functools.partial(operator.mul, rate)` or a factory function also work. Reviewers should flag any lambda or `def` created inside a loop that references the loop variable.
+
+## challenge: fix: Failing scores dodge the purge
+tags: code-review, debugging, lists
+track: python
+lang: python
+difficulty: medium
+
+Code review found a bug: purging scores below the passing mark leaves some failing scores behind — always ones that sat right next to another failing score. Find and fix it — keep the function signature (and keep it in-place: callers hold references to the list).
+
+hint: Trace the loop by hand on `[50, 40, 90]` with passing=60 and watch the indices.
+hint: The list is being modified while it is being iterated.
+hint: `pop(i)` shifts everything after `i` one slot left, but the iterator still advances — the element right after each removal is never examined. Rebuild and assign back via `scores[:] = ...`.
+
+```python
+# starter
+def drop_failing(scores, passing):
+    """Remove every score below `passing` from the list, in place. Returns the list."""
+    for i, s in enumerate(scores):
+        if s < passing:
+            scores.pop(i)
+    return scores
+```
+
+```python
+def drop_failing(scores, passing):
+    """Remove every score below `passing` from the list, in place. Returns the list."""
+    scores[:] = [s for s in scores if s >= passing]
+    return scores
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    data = [50, 40, 90, 30, 20, 95]
+    out = drop_failing(data, 60)
+    assert out == [90, 95], out
+    assert out is data, "must modify the caller's list in place"
+    assert drop_failing([10, 10, 10], 60) == []
+    assert drop_failing([70, 80], 60) == [70, 80]
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Removing elements from a list while iterating over it desynchronizes the iterator from the data: `pop(i)` shifts every later element left, then the loop advances anyway, so the element that slid into position `i` is never inspected. That's why adjacent failing scores survive in pairs. The fix filters into a fresh list and assigns it back through a slice — `scores[:] = [s for s in scores if s >= passing]` — which preserves the in-place contract (same list object) while never mutating mid-iteration. A reviewer's rule of thumb: any `remove`/`pop`/`del` on the sequence named in the `for` header is a bug until proven otherwise.
+
+## challenge: fix: Undo corrupts the board
+tags: code-review, debugging, copying
+track: python
+lang: python
+difficulty: medium
+
+Code review found a bug: placing a mark on the "new" board also appears on the original board kept for undo, so undo restores a corrupted position. Find and fix it — keep the function signature.
+
+hint: `list(board)` does make a new list — so what do the two lists contain?
+hint: This is a shallow-vs-deep copy problem on a nested structure.
+hint: The copied outer list still holds the *same* row objects; copy each row too (`[list(r) for r in board]`) or use `copy.deepcopy`.
+
+```python
+# starter
+def with_move(board, row, col, mark):
+    """Return a new board with `mark` placed at (row, col).
+
+    The original board must be left untouched (it is kept for undo).
+    """
+    new_board = list(board)
+    new_board[row][col] = mark
+    return new_board
+```
+
+```python
+def with_move(board, row, col, mark):
+    """Return a new board with `mark` placed at (row, col).
+
+    The original board must be left untouched (it is kept for undo).
+    """
+    new_board = [list(r) for r in board]
+    new_board[row][col] = mark
+    return new_board
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    board = [[".", ".", "."], [".", ".", "."]]
+    nb = with_move(board, 0, 2, "X")
+    assert nb[0][2] == "X"
+    assert board[0][2] == ".", "original board was modified"
+    assert nb is not board
+    nb2 = with_move(board, 1, 0, "O")
+    assert nb2[1][0] == "O" and nb2[0][2] == "."
+    assert board == [[".", ".", "."], [".", ".", "."]]
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** `list(board)` copies only the outer list; its elements are references to the *same* row lists, so `new_board[row]` and `board[row]` are one object and writing a cell mutates both boards. The fix copies each level that will be mutated: `[list(r) for r in board]` (or `copy.deepcopy` for arbitrary nesting). Reviewers catch this by asking, whenever a copy of a nested structure is made, "shallow or deep — and which level gets mutated afterwards?"; `list(x)`, `x[:]`, `x.copy()`, and `copy.copy(x)` are all equally shallow.
+
+## challenge: fix: Ten dimes don't make a dollar
+tags: code-review, debugging, floats
+track: python
+lang: python
+difficulty: hard
+
+Code review found a bug: a customer who pays 1.00 in ten 0.10 installments is flagged as *not* having covered the bill, while other payment plans work fine. Find and fix it — keep the function signature.
+
+hint: Print `paid` with `repr()` after summing ten 0.10 payments.
+hint: 0.1 has no exact binary representation; adding it repeatedly accumulates representation error.
+hint: Never compare accumulated floats with `==` — compare within a tolerance (`math.isclose`) or work in integer cents.
+
+```python
+# starter
+def payments_cover(installments, total):
+    """True if the installments add up to exactly the total owed."""
+    paid = 0.0
+    for amount in installments:
+        paid += amount
+    return paid == total
+```
+
+```python
+import math
+
+def payments_cover(installments, total):
+    """True if the installments add up to exactly the total owed."""
+    paid = 0.0
+    for amount in installments:
+        paid += amount
+    return math.isclose(paid, total, rel_tol=1e-9, abs_tol=1e-9)
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert payments_cover([0.1] * 10, 1.0), "ten 0.10 payments must cover 1.00"
+    assert payments_cover([0.5, 0.25, 0.25], 1.0)
+    assert not payments_cover([0.5, 0.25], 1.0), "underpayment must not pass"
+    assert payments_cover([], 0.0)
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** `0.1` cannot be represented exactly in binary floating point; each addition carries a tiny error, and after ten of them `paid` is `0.9999999999999999`, which `== 1.0` rejects. Payments of 0.5/0.25 happen to be exact powers of two, which is why "other plans work fine" — the classic intermittent float bug. Fix the comparison, not the arithmetic: `math.isclose(paid, total, rel_tol=1e-9, abs_tol=1e-9)` (the `abs_tol` matters so that totals of 0.0 still compare). For real money, the deeper fix is to avoid floats entirely — integer cents or `decimal.Decimal`. Reviewers flag any `==` between floats that were produced by accumulation.
+
+## challenge: fix: Account drained below zero
+tags: code-review, debugging, race-condition
+track: python
+lang: python
+difficulty: hard
+
+Code review found a bug: when the notification hook triggers another transaction on the same accounts, the source balance can go negative even though the funds check passed. Find and fix it — keep the function signature.
+
+hint: The balance check is correct — the question is what can happen *between* the check and the debit.
+hint: Time-of-check to time-of-use: the hook runs arbitrary code while the check's conclusion is still pending.
+hint: Make check-and-update atomic: perform the debit/credit immediately after the check, and only then run the hook (in real concurrent code, hold a lock around check+update or re-validate).
+
+```python
+# starter
+def transfer(accounts, src, dst, amount, on_transfer=None):
+    """Move `amount` from accounts[src] to accounts[dst] if funds allow.
+
+    `on_transfer` is a notification hook; handlers may run arbitrary code,
+    including other transactions against the same `accounts` mapping.
+    """
+    if accounts[src] >= amount:
+        if on_transfer is not None:
+            on_transfer(accounts)
+        accounts[src] -= amount
+        accounts[dst] += amount
+        return True
+    return False
+```
+
+```python
+def transfer(accounts, src, dst, amount, on_transfer=None):
+    """Move `amount` from accounts[src] to accounts[dst] if funds allow.
+
+    `on_transfer` is a notification hook; handlers may run arbitrary code,
+    including other transactions against the same `accounts` mapping.
+    """
+    if accounts[src] >= amount:
+        accounts[src] -= amount
+        accounts[dst] += amount
+        if on_transfer is not None:
+            on_transfer(accounts)
+        return True
+    return False
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    accounts = {"a": 100, "b": 0}
+    assert transfer(accounts, "a", "b", 60) is True
+    assert accounts == {"a": 40, "b": 60}
+    assert transfer(accounts, "a", "b", 100) is False
+    assert accounts == {"a": 40, "b": 60}
+
+    # A handler that fires a rival transaction while ours is in flight.
+    accounts = {"a": 100, "b": 0, "c": 0}
+    def rival(accts):
+        if accts["a"] >= 100:
+            accts["a"] -= 100
+            accts["c"] += 100
+    transfer(accounts, "a", "b", 60, on_transfer=rival)
+    assert accounts["a"] >= 0, "source account overdrawn: %r" % accounts
+    assert accounts["a"] + accounts["b"] + accounts["c"] == 100
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** This is a time-of-check/time-of-use (TOCTOU) bug: the code verifies `accounts[src] >= amount`, then runs the hook — arbitrary foreign code that can move money — and only afterwards applies the debit. By then the check's conclusion may be stale: the rival handler drains the account between check and use, and the debit pushes it to -60. The fix makes check-and-update one uninterruptible unit — debit and credit immediately after the guard, with the hook moved outside the critical section. The same shape appears with threads (`if key not in cache: cache[key] = ...`), files (`os.path.exists` then `open`), and `await` points; the reviewer's question is always "what can run between this check and this action, and is the check still true then?"
+
+## challenge: fix: Leaderboard ties sorted backwards
+tags: code-review, debugging, sorting
+track: python
+lang: python
+difficulty: hard
+
+Code review found a bug: players tied on score appear in reverse alphabetical order (Z→A) on the leaderboard, though the spec says ties break A→Z. Find and fix it — keep the function signature.
+
+hint: The scores are ordered correctly; only the tie-break direction is wrong.
+hint: What does `reverse=True` apply to — one component of the key, or the whole comparison?
+hint: `reverse=True` flips the entire key, tie-breakers included. Encode direction in the key itself: negate the numeric part (`(-score, name)`) and drop `reverse`.
+
+```python
+# starter
+def leaderboard(players):
+    """Sort by score, highest first; ties broken by name A->Z."""
+    return sorted(players, key=lambda p: (p["score"], p["name"]), reverse=True)
+```
+
+```python
+def leaderboard(players):
+    """Sort by score, highest first; ties broken by name A->Z."""
+    return sorted(players, key=lambda p: (-p["score"], p["name"]))
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    players = [
+        {"name": "mia", "score": 90},
+        {"name": "alex", "score": 90},
+        {"name": "zoe", "score": 95},
+    ]
+    names = [p["name"] for p in leaderboard(players)]
+    assert names == ["zoe", "alex", "mia"], names
+
+    players = [
+        {"name": "dan", "score": 70},
+        {"name": "bea", "score": 70},
+        {"name": "cy", "score": 70},
+    ]
+    names = [p["name"] for p in leaderboard(players)]
+    assert names == ["bea", "cy", "dan"], names
+
+    assert leaderboard([]) == []
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** `reverse=True` reverses the *entire* sort order — every component of the key tuple — so while scores correctly come out highest-first, tied names come out Z→A as well. Mixed-direction sorts must encode direction inside the key: negate the numeric component (`key=lambda p: (-p["score"], p["name"])`) and sort forward. (For non-negatable keys, the alternative is two stable passes: sort by the secondary key first, then by the primary.) This is a cmp-era habit — thinking of `reverse` as "flip my main criterion" — and reviewers should re-check every `reverse=True` that rides along with a multi-part key.
+
+## challenge: fix: Schema bugs vanish into the total
+tags: code-review, debugging, exceptions
+track: python
+lang: python
+difficulty: hard
+
+Code review found a bug: a report whose column was misspelled upstream produced a quietly wrong total for weeks — rows with a missing `amount` key were silently dropped, when only genuinely non-numeric amounts should be skipped. Find and fix it — keep the function signature.
+
+hint: The skipping logic is intentional — the question is *which* failures it was meant to skip.
+hint: `except Exception` catches far more than bad numbers: `KeyError`, `AttributeError`, and other symptoms of code or schema bugs.
+hint: Catch exactly what a malformed amount raises — `float()` raises `ValueError` for bad strings and `TypeError` for non-numeric types — and let `KeyError` propagate.
+
+```python
+# starter
+def total_amount(rows):
+    """Sum each row's 'amount' field, skipping rows whose amount isn't a number."""
+    total = 0.0
+    for row in rows:
+        try:
+            total += float(row["amount"])
+        except Exception:
+            continue
+    return total
+```
+
+```python
+def total_amount(rows):
+    """Sum each row's 'amount' field, skipping rows whose amount isn't a number."""
+    total = 0.0
+    for row in rows:
+        try:
+            total += float(row["amount"])
+        except (ValueError, TypeError):
+            continue
+    return total
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    rows = [{"amount": "3.5"}, {"amount": "oops"}, {"amount": "1.5"}, {"amount": None}]
+    assert total_amount(rows) == 5.0
+
+    try:
+        total_amount([{"amount": "2.0"}, {"amout": "9.9"}])   # misspelled column
+        raised = False
+    except KeyError:
+        raised = True
+    assert raised, "a missing 'amount' key must raise, not be silently swallowed"
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** The `try` was meant to skip rows whose amount isn't a number, but `except Exception` also swallows `KeyError` — the signature of a schema bug, not of dirty data — so structurally broken rows disappear from the total without a trace. The fix is to catch exactly what a malformed amount can raise: `float()` raises `ValueError` for unparseable strings and `TypeError` for non-numeric objects, so `except (ValueError, TypeError): continue` keeps the intended skipping while letting real bugs surface loudly. In review, treat every `except Exception`/bare `except` around more than one failable operation as a place where your own bugs go to hide — name the exceptions the documented failure mode actually produces.
+
 ## challenge: Invert Binary Tree
 tags: tree, dfs, recursion, binary-tree
 track: python
@@ -31656,6 +35068,872 @@ _check()
 
 **Editorial:** `re.split(r'(\d+)', s)` breaks each string into alternating text and digit chunks (the capturing group keeps the digits). Casting the digit chunks to `int` makes the `key` a list that compares text lexicographically but numbers numerically, so `sorted` yields human-friendly "natural" order. Python's element-wise list comparison does the rest — no custom comparator needed. (Chunk positions alternate str/int by construction, so like compares with like.)
 
+## challenge: Merge Two Sorted Lists
+tags: array, two-pointers
+track: python
+lang: python
+difficulty: easy
+
+Given two lists `a` and `b`, each already sorted in non-decreasing order, merge them into a single sorted list and return it. Do not use `sort()` — produce the result in one linear pass.
+
+Constraints: `0 <= len(a), len(b) <= 10^4`, elements are integers (duplicates allowed).
+
+Example: `a = [1, 2, 4], b = [1, 3, 4]` → `[1, 1, 2, 3, 4, 4]`.
+
+hint: Both inputs are sorted — the smallest remaining element is always at the front of one of them.
+hint: Keep an index into each list; compare the two front elements and append the smaller one.
+hint: When one index runs off the end, the rest of the other list can be appended wholesale.
+
+```python
+# starter
+def merge_sorted(a, b):
+    ...
+```
+
+```python
+def merge_sorted(a, b):
+    i, j = 0, 0
+    out = []
+    while i < len(a) and j < len(b):
+        if a[i] <= b[j]:
+            out.append(a[i])
+            i += 1
+        else:
+            out.append(b[j])
+            j += 1
+    out.extend(a[i:])
+    out.extend(b[j:])
+    return out
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert merge_sorted([1, 2, 4], [1, 3, 4]) == [1, 1, 2, 3, 4, 4]
+    assert merge_sorted([], []) == []
+    assert merge_sorted([], [0]) == [0]
+    assert merge_sorted([5], []) == [5]
+    assert merge_sorted([1, 1, 1], [1, 1]) == [1, 1, 1, 1, 1]
+    assert merge_sorted([-3, -1, 2], [-2, 0, 7]) == [-3, -2, -1, 0, 2, 7]
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Classic two-pointer merge — the merge step of merge sort. Walk both lists with indices `i` and `j`, always appending the smaller front element, then extend with whichever tail remains. Using `<=` for ties keeps the merge stable. O(n + m) time, O(n + m) space for the output.
+
+## challenge: Squares of a Sorted Array
+tags: array, two-pointers
+track: python
+lang: python
+difficulty: easy
+
+Given a list `nums` sorted in non-decreasing order (it may contain negatives), return a list of the squares of each number, also sorted in non-decreasing order. Aim for O(n) — squaring then sorting is the O(n log n) baseline.
+
+Constraints: `1 <= len(nums) <= 10^4`, `-10^4 <= nums[i] <= 10^4`, input is sorted.
+
+Example: `nums = [-4, -1, 0, 3, 10]` → `[0, 1, 9, 16, 100]`.
+
+hint: After squaring, the biggest values sit at the two *ends* of the input, not in the middle.
+hint: Compare `abs(nums[lo])` with `abs(nums[hi])` — the larger absolute value produces the next-largest square.
+hint: Fill the output array from the back while moving `lo` and `hi` inward.
+
+```python
+# starter
+def sorted_squares(nums):
+    ...
+```
+
+```python
+def sorted_squares(nums):
+    n = len(nums)
+    out = [0] * n
+    lo, hi = 0, n - 1
+    for k in range(n - 1, -1, -1):
+        if abs(nums[lo]) > abs(nums[hi]):
+            out[k] = nums[lo] ** 2
+            lo += 1
+        else:
+            out[k] = nums[hi] ** 2
+            hi -= 1
+    return out
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert sorted_squares([-4, -1, 0, 3, 10]) == [0, 1, 9, 16, 100]
+    assert sorted_squares([-7, -3, 2, 3, 11]) == [4, 9, 9, 49, 121]
+    assert sorted_squares([-5, -3, -2]) == [4, 9, 25]
+    assert sorted_squares([1, 2, 3]) == [1, 4, 9]
+    assert sorted_squares([0]) == [0]
+    assert sorted_squares([-1, 1]) == [1, 1]
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** The squared values form a valley: large at both ends, smallest near zero. Two pointers at the ends pick the larger absolute value each step and write it into the output from the back. One pass, O(n) time, O(n) output space — no sort needed.
+
+## challenge: Roman to Integer
+tags: string, hash-table
+track: python
+lang: python
+difficulty: easy
+
+Given a valid Roman numeral string `s`, convert it to an integer. Symbols: `I=1, V=5, X=10, L=50, C=100, D=500, M=1000`. Subtractive pairs like `IV` (4), `IX` (9), `XL` (40), `CM` (900) mean a smaller symbol placed before a larger one is subtracted.
+
+Constraints: `1 <= len(s) <= 15`, `s` is a valid Roman numeral in `[1, 3999]`.
+
+Example: `s = "MCMXCIV"` → `1994` (M=1000, CM=900, XC=90, IV=4).
+
+hint: Map each symbol to its value with a dict, then scan left to right.
+hint: The only twist is the subtractive rule — when does a symbol count as negative?
+hint: If a symbol's value is smaller than the value of the symbol to its right, subtract it; otherwise add it.
+
+```python
+# starter
+def roman_to_int(s):
+    ...
+```
+
+```python
+def roman_to_int(s):
+    vals = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+    total = 0
+    for i, ch in enumerate(s):
+        v = vals[ch]
+        if i + 1 < len(s) and v < vals[s[i + 1]]:
+            total -= v
+        else:
+            total += v
+    return total
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert roman_to_int("III") == 3
+    assert roman_to_int("IV") == 4
+    assert roman_to_int("IX") == 9
+    assert roman_to_int("LVIII") == 58
+    assert roman_to_int("MCMXCIV") == 1994
+    assert roman_to_int("MMXXVI") == 2026
+    assert roman_to_int("I") == 1
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** One pass with a symbol-to-value dict. The subtractive notation collapses to a single local rule: a symbol strictly smaller than its right neighbor contributes negatively (`IV` = -1 + 5). No pair table needed. O(n) time, O(1) space.
+
+## challenge: Min Cost Climbing Stairs
+tags: dp, array
+track: python
+lang: python
+difficulty: easy
+
+You are given a list `cost` where `cost[i]` is the price of stepping on stair `i`. Once you pay, you may climb one or two stairs. You start from stair `0` or stair `1` for free (you pay when you step off it). Return the minimum total cost to reach the top — one past the last stair.
+
+Constraints: `2 <= len(cost) <= 1000`, `0 <= cost[i] <= 999`.
+
+Example: `cost = [10, 15, 20]` → `15` (start on stair 1, pay 15, jump two to the top).
+
+hint: Let `dp[i]` be the cheapest way to *leave* stair `i`. How do you arrive at stair `i` in the first place?
+hint: `dp[i] = cost[i] + min(dp[i-1], dp[i-2])`, and the answer is `min(dp[n-1], dp[n-2])`.
+hint: You only ever look two steps back — two rolling variables replace the whole array.
+
+```python
+# starter
+def min_cost_climbing_stairs(cost):
+    ...
+```
+
+```python
+def min_cost_climbing_stairs(cost):
+    a, b = 0, 0
+    for c in cost:
+        a, b = b, min(a, b) + c
+    return min(a, b)
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert min_cost_climbing_stairs([10, 15, 20]) == 15
+    assert min_cost_climbing_stairs([1, 100, 1, 1, 1, 100, 1, 1, 100, 1]) == 6
+    assert min_cost_climbing_stairs([0, 0]) == 0
+    assert min_cost_climbing_stairs([5, 10]) == 5
+    assert min_cost_climbing_stairs([1, 2]) == 1
+    assert min_cost_climbing_stairs([0, 1, 2, 2]) == 2
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Bottom-up DP where `dp[i]` is the cost paid up to and including leaving stair `i`: `dp[i] = cost[i] + min(dp[i-1], dp[i-2])`. Because you may start on stair 0 or 1, the two seeds are 0, and because you may finish from either of the last two stairs, the answer is `min(dp[n-1], dp[n-2])`. Rolling two variables gives O(n) time, O(1) space.
+
+## challenge: Rotate Array
+tags: array, two-pointers
+track: python
+lang: python
+difficulty: medium
+
+Given a list `nums` and a non-negative integer `k`, return a new list equal to `nums` rotated to the right by `k` steps (the last `k` elements wrap around to the front). `k` may be larger than the length of the list.
+
+Constraints: `1 <= len(nums) <= 10^5`, `0 <= k <= 10^9`.
+
+Example: `nums = [1, 2, 3, 4, 5, 6, 7], k = 3` → `[5, 6, 7, 1, 2, 3, 4]`.
+
+hint: Rotating by `len(nums)` steps lands you back where you started — what does that say about huge `k`?
+hint: Reduce with `k % n` first, then the answer is just two slices glued together.
+hint: The last `k` elements are `nums[-k:]`; everything before them is `nums[:-k]`. Watch the `k == 0` case — `nums[-0:]` is the whole list!
+
+```python
+# starter
+def rotate_array(nums, k):
+    ...
+```
+
+```python
+def rotate_array(nums, k):
+    n = len(nums)
+    k %= n
+    if k == 0:
+        return nums[:]
+    return nums[-k:] + nums[:-k]
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert rotate_array([1, 2, 3, 4, 5, 6, 7], 3) == [5, 6, 7, 1, 2, 3, 4]
+    assert rotate_array([-1, -100, 3, 99], 2) == [3, 99, -1, -100]
+    assert rotate_array([1, 2, 3], 0) == [1, 2, 3]
+    assert rotate_array([1, 2, 3], 3) == [1, 2, 3]
+    assert rotate_array([1, 2, 3], 10) == [3, 1, 2]
+    assert rotate_array([1], 5) == [1]
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Normalize `k %= n` since a full-length rotation is the identity, then concatenate the two slices `nums[-k:] + nums[:-k]`. The classic trap is `k == 0`: `nums[-0:]` slices the entire list, so it needs a guard. The in-place alternative (reverse all, reverse first `k`, reverse rest) achieves O(1) extra space; the slice version is O(n) time and space.
+
+## challenge: String Compression
+tags: string, two-pointers
+track: python
+lang: python
+difficulty: medium
+
+Given a string `s`, compress it by replacing each run of consecutive repeated characters with the character followed by the run length — but omit the count when the run length is 1. Return the compressed string. `"aabbccc"` becomes `"a2b2c3"`; `"abc"` stays `"abc"`. Runs longer than 9 keep their full multi-digit count.
+
+Constraints: `0 <= len(s) <= 10^5`, `s` consists of letters (case-sensitive).
+
+Example: `s = "abbbbbbbbbbbb"` → `"ab12"` (one `a`, twelve `b`s).
+
+hint: Walk the string with two indices: `i` marks the start of the current run, `j` scans forward while characters match.
+hint: The run length is `j - i`; append the character, then the count only if it exceeds 1.
+hint: Build the pieces in a list and `"".join` at the end — repeated string concatenation is quadratic.
+
+```python
+# starter
+def compress(s):
+    ...
+```
+
+```python
+def compress(s):
+    out = []
+    i = 0
+    while i < len(s):
+        j = i
+        while j < len(s) and s[j] == s[i]:
+            j += 1
+        out.append(s[i])
+        if j - i > 1:
+            out.append(str(j - i))
+        i = j
+    return "".join(out)
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert compress("aabbccc") == "a2b2c3"
+    assert compress("a") == "a"
+    assert compress("abbbbbbbbbbbb") == "ab12"
+    assert compress("abc") == "abc"
+    assert compress("") == ""
+    assert compress("aaAAaa") == "a2A2a2"
+    assert compress("aaaaaaaaaaaa") == "a12"
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Two-pointer run-length encoding: `i` anchors the run, `j` races ahead until the character changes, and `j - i` is the count. Emitting into a list and joining once avoids O(n²) string concatenation. Edge cases that trip people up: single-character runs (no count emitted), multi-digit counts, and the empty string. O(n) time, O(n) space.
+
+## challenge: Longest Palindromic Substring
+tags: string, dp
+track: python
+lang: python
+difficulty: medium
+
+Given a string `s`, return the longest contiguous substring of `s` that is a palindrome. If several palindromic substrings tie for the longest, returning any one of them is accepted.
+
+Constraints: `1 <= len(s) <= 1000`, `s` consists of letters and digits.
+
+Example: `s = "babad"` → `"bab"` (`"aba"` is equally valid).
+
+hint: Every palindrome has a center — either a single character (odd length) or a gap between two characters (even length).
+hint: For each of the `2n - 1` centers, expand outward while the two ends match.
+hint: Track the best window seen; expansion from all centers gives O(n²) time with O(1) extra space — no DP table required.
+
+```python
+# starter
+def longest_palindrome(s):
+    ...
+```
+
+```python
+def longest_palindrome(s):
+    best = s[0]
+    for i in range(len(s)):
+        for lo, hi in ((i, i), (i, i + 1)):
+            while lo >= 0 and hi < len(s) and s[lo] == s[hi]:
+                lo -= 1
+                hi += 1
+            if hi - lo - 1 > len(best):
+                best = s[lo + 1:hi]
+    return best
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert longest_palindrome("babad") in ("bab", "aba")
+    assert longest_palindrome("cbbd") == "bb"
+    assert longest_palindrome("a") == "a"
+    assert longest_palindrome("ac") in ("a", "c")
+    assert longest_palindrome("bananas") == "anana"
+    assert longest_palindrome("forgeeksskeegfor") == "geeksskeeg"
+    assert longest_palindrome("aacabdkacaa") == "aca"
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Expand around every center: `n` odd centers `(i, i)` and `n - 1` even centers `(i, i + 1)`. Each expansion grows while the ends match; after the loop overshoots, the palindrome is `s[lo+1:hi]` with length `hi - lo - 1`. O(n²) time, O(1) space — beats the O(n²)-space DP table, and Manacher's algorithm gets O(n) if you ever need it.
+
+## challenge: Spiral Matrix
+tags: matrix, array
+track: python
+lang: python
+difficulty: medium
+
+Given an `m x n` matrix (a list of lists), return a flat list of all elements visited in clockwise spiral order: across the top row, down the right column, back across the bottom row, up the left column, then repeat one layer in.
+
+Constraints: `0 <= m, n <= 100`; an empty matrix yields `[]`.
+
+Example: `matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]` → `[1, 2, 3, 6, 9, 8, 7, 4, 5]`.
+
+hint: Maintain four boundaries — `top`, `bottom`, `left`, `right` — and shrink one after consuming each edge.
+hint: The traversal order is: top row left→right, right column top→bottom, bottom row right→left, left column bottom→top.
+hint: For non-square matrices, re-check `top <= bottom` before the bottom row and `left <= right` before the left column, or you'll double-count a lone row or column.
+
+```python
+# starter
+def spiral_order(matrix):
+    ...
+```
+
+```python
+def spiral_order(matrix):
+    if not matrix or not matrix[0]:
+        return []
+    out = []
+    top, bottom = 0, len(matrix) - 1
+    left, right = 0, len(matrix[0]) - 1
+    while top <= bottom and left <= right:
+        for c in range(left, right + 1):
+            out.append(matrix[top][c])
+        top += 1
+        for r in range(top, bottom + 1):
+            out.append(matrix[r][right])
+        right -= 1
+        if top <= bottom:
+            for c in range(right, left - 1, -1):
+                out.append(matrix[bottom][c])
+            bottom -= 1
+        if left <= right:
+            for r in range(bottom, top - 1, -1):
+                out.append(matrix[r][left])
+            left += 1
+    return out
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert spiral_order([[1, 2, 3], [4, 5, 6], [7, 8, 9]]) == [1, 2, 3, 6, 9, 8, 7, 4, 5]
+    assert spiral_order([[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]]) == [1, 2, 3, 4, 8, 12, 11, 10, 9, 5, 6, 7]
+    assert spiral_order([[1, 2, 3]]) == [1, 2, 3]
+    assert spiral_order([[1], [2], [3]]) == [1, 2, 3]
+    assert spiral_order([[7]]) == [7]
+    assert spiral_order([[1, 2], [3, 4]]) == [1, 2, 4, 3]
+    assert spiral_order([]) == []
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Peel the matrix layer by layer with four shrinking boundaries. Each pass consumes the top row, right column, bottom row, and left column, tightening the corresponding bound after each edge. The two mid-loop guards prevent re-reading a single remaining row or column in non-square inputs — the classic bug in this problem. O(mn) time, O(1) extra space beyond the output.
+
+## challenge: Rotting Oranges
+tags: bfs, matrix, graph
+track: python
+lang: python
+difficulty: medium
+
+You are given an `m x n` grid where each cell is `0` (empty), `1` (fresh orange), or `2` (rotten orange). Every minute, each fresh orange 4-directionally adjacent to a rotten one becomes rotten. Return the number of minutes until no fresh orange remains, or `-1` if some fresh orange can never rot. Do not mutate the input grid.
+
+Constraints: `1 <= m, n <= 100`, cells are `0`, `1`, or `2`.
+
+Example: `grid = [[2, 1, 1], [1, 1, 0], [0, 1, 1]]` → `4`.
+
+hint: "Every minute, all adjacent at once" is the signature of multi-source BFS — seed the queue with *every* rotten orange.
+hint: Process the queue level by level; each level is one minute.
+hint: Count fresh oranges up front. If the BFS finishes with fresh ones left, they're unreachable — return -1.
+
+```python
+# starter
+def oranges_rotting(grid):
+    ...
+```
+
+```python
+from collections import deque
+
+def oranges_rotting(grid):
+    rows, cols = len(grid), len(grid[0])
+    grid = [row[:] for row in grid]
+    q = deque()
+    fresh = 0
+    for r in range(rows):
+        for c in range(cols):
+            if grid[r][c] == 2:
+                q.append((r, c))
+            elif grid[r][c] == 1:
+                fresh += 1
+    minutes = 0
+    while q and fresh:
+        for _ in range(len(q)):
+            r, c = q.popleft()
+            for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] == 1:
+                    grid[nr][nc] = 2
+                    fresh -= 1
+                    q.append((nr, nc))
+        minutes += 1
+    return -1 if fresh else minutes
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert oranges_rotting([[2, 1, 1], [1, 1, 0], [0, 1, 1]]) == 4
+    assert oranges_rotting([[2, 1, 1], [0, 1, 1], [1, 0, 1]]) == -1
+    assert oranges_rotting([[0, 2]]) == 0
+    assert oranges_rotting([[0]]) == 0
+    assert oranges_rotting([[1]]) == -1
+    assert oranges_rotting([[2, 1, 1, 1]]) == 3
+    assert oranges_rotting([[2], [1], [1], [2]]) == 1
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Multi-source BFS: enqueue every initially rotten orange, count the fresh ones, then expand in levels — one level per minute. Looping `for _ in range(len(q))` freezes the current frontier so newly rotted oranges wait for the next minute. Guarding the loop with `and fresh` stops the clock the moment the last orange rots, and any leftover `fresh` means an isolated orange → -1. O(mn) time and space.
+
+## challenge: Merge Intervals
+tags: intervals, array
+track: python
+lang: python
+difficulty: medium
+
+Given a list of intervals `[start, end]` in arbitrary order, merge all overlapping intervals and return the merged list sorted by start. Intervals that merely touch (one ends exactly where the next begins) count as overlapping.
+
+Constraints: `0 <= len(intervals) <= 10^4`, `start <= end` for every interval.
+
+Example: `intervals = [[1, 3], [2, 6], [8, 10], [15, 18]]` → `[[1, 6], [8, 10], [15, 18]]`.
+
+hint: Sort by start first — then any overlap must be with the interval you just emitted.
+hint: Compare each interval's start with the end of the last merged interval.
+hint: On overlap, don't just replace the end — take the max, or a nested interval like `[2, 3]` inside `[1, 10]` will shrink it.
+
+```python
+# starter
+def merge_intervals(intervals):
+    ...
+```
+
+```python
+def merge_intervals(intervals):
+    merged = []
+    for start, end in sorted(intervals):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return merged
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert merge_intervals([[1, 3], [2, 6], [8, 10], [15, 18]]) == [[1, 6], [8, 10], [15, 18]]
+    assert merge_intervals([[1, 4], [4, 5]]) == [[1, 5]]
+    assert merge_intervals([[5, 6], [1, 3], [2, 4]]) == [[1, 4], [5, 6]]
+    assert merge_intervals([[1, 4]]) == [[1, 4]]
+    assert merge_intervals([[1, 10], [2, 3], [4, 5]]) == [[1, 10]]
+    assert merge_intervals([]) == []
+    assert merge_intervals([[-5, -2], [-3, 0], [1, 2]]) == [[-5, 0], [1, 2]]
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Sort by start, then sweep once: if the current interval starts at or before the end of the last merged one, extend that end with `max` (the max matters for nested intervals); otherwise start a new merged interval. Sorting dominates at O(n log n); the sweep is O(n). This sort-then-sweep pattern is the backbone of nearly every interval problem.
+
+## challenge: Jump Game
+tags: greedy, array, dp
+track: python
+lang: python
+difficulty: medium
+
+You are given a list `nums` where `nums[i]` is the maximum number of positions you may jump forward from index `i`. Starting at index `0`, return `True` if you can reach the last index, and `False` otherwise.
+
+Constraints: `1 <= len(nums) <= 10^4`, `0 <= nums[i] <= 10^5`.
+
+Example: `nums = [2, 3, 1, 1, 4]` → `True` (jump 0→1, then 1→4).
+
+hint: You don't need to know *which* jumps to take — only how far right you could possibly be.
+hint: Track `reach`, the furthest index attainable so far; from index `i` you can extend it to `i + nums[i]`.
+hint: If you ever stand at an index beyond `reach`, you're stranded — that's the only way to fail.
+
+```python
+# starter
+def can_jump(nums):
+    ...
+```
+
+```python
+def can_jump(nums):
+    reach = 0
+    for i, step in enumerate(nums):
+        if i > reach:
+            return False
+        reach = max(reach, i + step)
+    return True
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert can_jump([2, 3, 1, 1, 4]) is True
+    assert can_jump([3, 2, 1, 0, 4]) is False
+    assert can_jump([0]) is True
+    assert can_jump([0, 1]) is False
+    assert can_jump([2, 0, 0]) is True
+    assert can_jump([1, 1, 1, 1]) is True
+    assert can_jump([5, 0, 0, 0]) is True
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Greedy beats DP here. Sweep left to right maintaining `reach`, the furthest reachable index; a position `i > reach` is unreachable, so the answer is `False`, otherwise fold `i + nums[i]` into `reach`. If the scan completes, the last index was covered. The greedy is safe because reachability is monotone — reaching further never hurts. O(n) time, O(1) space, versus O(n²) for naive DP.
+
+## challenge: K Closest Points to Origin
+tags: heap, array
+track: python
+lang: python
+difficulty: medium
+
+Given a list of `points` where `points[i] = [x, y]`, return the `k` points closest to the origin `(0, 0)` by Euclidean distance. The answer may be returned in any order and is guaranteed unique for the given tests.
+
+Constraints: `1 <= k <= len(points) <= 10^4`, `-10^4 <= x, y <= 10^4`.
+
+Example: `points = [[1, 3], [-2, 2]], k = 1` → `[[-2, 2]]` (distance √8 < √10).
+
+hint: Comparing squared distances `x² + y²` avoids the square root entirely — the ordering is identical.
+hint: Sorting everything costs O(n log n); a heap of the candidates gets you O(n log k).
+hint: `heapq.nsmallest(k, points, key=...)` does the bounded-heap selection in one line.
+
+```python
+# starter
+def k_closest(points, k):
+    ...
+```
+
+```python
+import heapq
+
+def k_closest(points, k):
+    return heapq.nsmallest(k, points, key=lambda p: p[0] * p[0] + p[1] * p[1])
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert sorted(k_closest([[1, 3], [-2, 2]], 1)) == [[-2, 2]]
+    assert sorted(k_closest([[3, 3], [5, -1], [-2, 4]], 2)) == [[-2, 4], [3, 3]]
+    assert sorted(k_closest([[0, 1], [1, 0]], 2)) == [[0, 1], [1, 0]]
+    assert sorted(k_closest([[0, 0]], 1)) == [[0, 0]]
+    assert sorted(k_closest([[2, 2], [1, 1], [3, 3]], 2)) == [[1, 1], [2, 2]]
+    assert sorted(k_closest([[1, 1], [2, 2], [3, 3], [4, 4], [5, 5]], 3)) == [[1, 1], [2, 2], [3, 3]]
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Rank by squared distance — monotone in true distance, so the square root is dead weight. `heapq.nsmallest` maintains a bounded max-heap of size `k` internally: O(n log k) time, O(k) space, better than a full sort when `k << n`. Interviewers may also want the quickselect variant, which reaches O(n) average by partitioning around a pivot distance.
+
+## challenge: Non-overlapping Intervals
+tags: intervals, greedy
+track: python
+lang: python
+difficulty: hard
+
+Given a list of intervals `[start, end]`, return the minimum number of intervals you must remove so that the remaining intervals are mutually non-overlapping. Intervals that only touch at a point (like `[1, 2]` and `[2, 3]`) do not overlap.
+
+Constraints: `0 <= len(intervals) <= 10^5`, `start < end` for every interval.
+
+Example: `intervals = [[1, 2], [2, 3], [3, 4], [1, 3]]` → `1` (remove `[1, 3]`).
+
+hint: Minimizing removals is the same as maximizing the number of intervals you keep — a scheduling problem in disguise.
+hint: Greedy by earliest *end* time: the interval that finishes first leaves the most room for the rest.
+hint: Sort by end; keep an interval if its start is at or after the end of the last kept one, otherwise count it as removed.
+
+```python
+# starter
+def erase_overlap_intervals(intervals):
+    ...
+```
+
+```python
+def erase_overlap_intervals(intervals):
+    removed = 0
+    prev_end = float("-inf")
+    for start, end in sorted(intervals, key=lambda iv: iv[1]):
+        if start >= prev_end:
+            prev_end = end
+        else:
+            removed += 1
+    return removed
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert erase_overlap_intervals([[1, 2], [2, 3], [3, 4], [1, 3]]) == 1
+    assert erase_overlap_intervals([[1, 2], [1, 2], [1, 2]]) == 2
+    assert erase_overlap_intervals([[1, 2], [2, 3]]) == 0
+    assert erase_overlap_intervals([]) == 0
+    assert erase_overlap_intervals([[1, 2]]) == 0
+    assert erase_overlap_intervals([[1, 100], [11, 22], [1, 11], [2, 12]]) == 2
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** This is interval scheduling maximization flipped around: `removals = n - (max compatible set)`. The greedy that sorts by end time and always keeps the earliest-finishing compatible interval is provably optimal — an exchange argument shows any optimal solution can be rewritten to use the earliest end without losing intervals. Sorting by *start* instead is the classic wrong move. O(n log n) time, O(1) extra space.
+
+## challenge: Longest Increasing Subsequence
+tags: dp, binary-search, array
+track: python
+lang: python
+difficulty: hard
+
+Given a list `nums`, return the length of the longest strictly increasing subsequence. A subsequence keeps relative order but need not be contiguous. The O(n²) DP is easy — aim for O(n log n).
+
+Constraints: `0 <= len(nums) <= 2500`, `-10^4 <= nums[i] <= 10^4`.
+
+Example: `nums = [10, 9, 2, 5, 3, 7, 101, 18]` → `4` (one LIS is `[2, 3, 7, 101]`).
+
+hint: Keep `tails`, where `tails[i]` is the smallest possible tail of an increasing subsequence of length `i + 1`.
+hint: `tails` is always sorted — so each new number can be placed with binary search (`bisect_left`).
+hint: If the number extends beyond every tail, append it (length grows); otherwise it *replaces* the first tail `>=` it, keeping future options open.
+
+```python
+# starter
+def length_of_lis(nums):
+    ...
+```
+
+```python
+from bisect import bisect_left
+
+def length_of_lis(nums):
+    tails = []
+    for x in nums:
+        i = bisect_left(tails, x)
+        if i == len(tails):
+            tails.append(x)
+        else:
+            tails[i] = x
+    return len(tails)
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert length_of_lis([10, 9, 2, 5, 3, 7, 101, 18]) == 4
+    assert length_of_lis([0, 1, 0, 3, 2, 3]) == 4
+    assert length_of_lis([7, 7, 7, 7]) == 1
+    assert length_of_lis([1]) == 1
+    assert length_of_lis([]) == 0
+    assert length_of_lis([4, 10, 4, 3, 8, 9]) == 3
+    assert length_of_lis([1, 3, 6, 7, 9, 4, 10, 5, 6]) == 6
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Patience sorting. `tails[i]` holds the smallest tail of any increasing subsequence of length `i + 1`; that invariant keeps `tails` sorted, so `bisect_left` finds each number's spot in O(log n). Appending means a longer LIS exists; replacing lowers a tail so later numbers have an easier bar to clear. Note `tails` is *not* an actual LIS — only its length is meaningful. `bisect_left` (not `bisect_right`) enforces strict increase by rejecting equal elements. O(n log n) time, O(n) space.
+
+## challenge: Partition Equal Subset Sum
+tags: dp, array
+track: python
+lang: python
+difficulty: hard
+
+Given a list `nums` of positive integers, return `True` if the list can be split into two subsets with equal sums, and `False` otherwise. Every element must land in exactly one subset.
+
+Constraints: `1 <= len(nums) <= 200`, `1 <= nums[i] <= 100`.
+
+Example: `nums = [1, 5, 11, 5]` → `True` (`[1, 5, 5]` and `[11]` both sum to 11).
+
+hint: If the total sum is odd, no split can exist. If it's even, you're hunting a subset summing to exactly `total // 2` — 0/1 knapsack.
+hint: Track the set of subset sums reachable so far; each number extends every previously reachable sum.
+hint: Prune sums above the target, and return early the moment the target becomes reachable.
+
+```python
+# starter
+def can_partition(nums):
+    ...
+```
+
+```python
+def can_partition(nums):
+    total = sum(nums)
+    if total % 2:
+        return False
+    target = total // 2
+    reachable = {0}
+    for x in nums:
+        reachable |= {r + x for r in reachable if r + x <= target}
+        if target in reachable:
+            return True
+    return False
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    assert can_partition([1, 5, 11, 5]) is True
+    assert can_partition([1, 2, 3, 5]) is False
+    assert can_partition([1, 1]) is True
+    assert can_partition([1]) is False
+    assert can_partition([2, 2, 3, 5]) is False
+    assert can_partition([3, 3, 3, 4, 5]) is True
+    assert can_partition([100]) is False
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** Reduce to subset-sum: an equal split exists iff some subset hits `total // 2` (impossible when the total is odd). The DP state is simply "which sums are reachable" — a set (or boolean array/bitmask) that each number extends by shifting. Building the extension as a separate set before the union is the 0/1 discipline: it stops one element from being used twice in the same round. O(n · target) time, O(target) space; the bitmask trick (`bits |= bits << x`) makes it startlingly fast in practice.
+
+## challenge: Pacific Atlantic Water Flow
+tags: graph, bfs, matrix
+track: python
+lang: python
+difficulty: hard
+
+You are given an `m x n` grid `heights` of land elevations. The Pacific Ocean touches the top and left edges; the Atlantic touches the bottom and right edges. Rain water flows from a cell to a 4-directional neighbor of **equal or lower** height, and into an ocean off the matching edges. Return a list of `[r, c]` coordinates from which water can reach *both* oceans, in any order.
+
+Constraints: `1 <= m, n <= 200`, `0 <= heights[r][c] <= 10^5`.
+
+Example: `heights = [[1, 2], [4, 3]]` → `[[0, 1], [1, 0], [1, 1]]` (only `[0, 0]` is landlocked from the Atlantic).
+
+hint: Tracing water *downhill* from every cell is O((mn)²). Flip it: flood *uphill* from each ocean instead.
+hint: Start a search from every Pacific-edge cell and every Atlantic-edge cell, moving only to neighbors with height `>=` the current cell.
+hint: Two reachability sets — one per ocean — and the answer is their intersection.
+
+```python
+# starter
+def pacific_atlantic(heights):
+    ...
+```
+
+```python
+def pacific_atlantic(heights):
+    rows, cols = len(heights), len(heights[0])
+
+    def flood(starts):
+        seen = set(starts)
+        stack = list(starts)
+        while stack:
+            r, c = stack.pop()
+            for nr, nc in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)):
+                if (0 <= nr < rows and 0 <= nc < cols
+                        and (nr, nc) not in seen
+                        and heights[nr][nc] >= heights[r][c]):
+                    seen.add((nr, nc))
+                    stack.append((nr, nc))
+        return seen
+
+    pacific = flood([(r, 0) for r in range(rows)] + [(0, c) for c in range(cols)])
+    atlantic = flood([(r, cols - 1) for r in range(rows)] + [(rows - 1, c) for c in range(cols)])
+    return [[r, c] for r, c in pacific & atlantic]
+```
+
+```python
+# harness
+#__USER__
+def _check():
+    grid = [[1, 2, 2, 3, 5], [3, 2, 3, 4, 4], [2, 4, 5, 3, 1], [6, 7, 1, 4, 5], [5, 1, 1, 2, 4]]
+    assert sorted(pacific_atlantic(grid)) == [[0, 4], [1, 3], [1, 4], [2, 2], [3, 0], [3, 1], [4, 0]]
+    assert sorted(pacific_atlantic([[1]])) == [[0, 0]]
+    assert sorted(pacific_atlantic([[1, 2], [4, 3]])) == [[0, 1], [1, 0], [1, 1]]
+    assert sorted(pacific_atlantic([[1, 2, 3]])) == [[0, 0], [0, 1], [0, 2]]
+    assert sorted(pacific_atlantic([[2, 1], [1, 2]])) == [[0, 0], [0, 1], [1, 0], [1, 1]]
+    assert sorted(pacific_atlantic([[10, 10], [10, 10]])) == [[0, 0], [0, 1], [1, 0], [1, 1]]
+    print("PASS")
+
+_check()
+```
+
+**Editorial:** The key inversion: instead of asking "where can each cell drain to?", flood *from* each ocean, moving uphill (`neighbor >= current`) — a cell an ocean can climb to is exactly a cell that drains to that ocean. Two multi-source searches (BFS or DFS, here an iterative stack) seeded from the ocean edges give two reachability sets; the answer is their intersection. Each search visits every cell once: O(mn) time and space, versus O((mn)²) for per-cell downhill simulation.
+
 ## quiz: What does this print?
 tags: functions, gotcha
 track: python
@@ -31995,6 +36273,860 @@ print(["zero", "one", "two"][True])
 - [ ] `2` then `zero`
 
 > `bool` is a subclass of `int`, with `True == 1` and `False == 0`. So `True + True` is `2`, and indexing with `True` is indexing with `1`, giving the element `"one"`.
+
+## quiz: review: Everyone joins the same team
+tags: code-review, functions
+track: python
+difficulty: easy
+
+You're reviewing this code. What's the bug?
+
+```python
+def register_player(name, roster=[]):
+    roster.append(name)
+    return roster
+
+team_red = register_player("ann")
+team_blue = register_player("bob")
+print(team_blue)   # ['ann', 'bob'] -- bob is on ann's team?!
+```
+
+- [ ] `append` returns `None`, so the function should `return roster + [name]` instead
+- [x] the default `roster=[]` is evaluated once at `def` time, so every call that omits `roster` shares (and keeps appending to) the same list
+- [ ] lists are passed by value in Python, so appends inside the function never reach the caller
+- [ ] `team_blue` aliases `team_red` because assignment copies references between variables
+
+> Default parameter values are created once, when the `def` executes — not per call. Both calls that omit `roster` get the very same list object, which accumulates every player ever registered. Use a sentinel: `def register_player(name, roster=None):` and `if roster is None: roster = []`.
+
+## quiz: review: The session that was never found
+tags: code-review, identity
+track: python
+difficulty: easy
+
+You're reviewing this code. What's the bug?
+
+```python
+def find_token(sessions, user_id):
+    for s in sessions:
+        if s["user_id"] is user_id:
+            return s["token"]
+    return None
+
+sessions = [{"user_id": 1001, "token": "t-red"},
+            {"user_id": 1002, "token": "t-blue"}]
+uid = int("1001")                  # parsed from a request
+print(find_token(sessions, uid))   # None -- but the session exists!
+```
+
+- [ ] `int("1001")` returns a numeric string, which never equals the integer `1001`
+- [ ] dict lookup with `s["user_id"]` returns `None` because the key was stored as a string
+- [x] `is` tests object identity, not equality — two equal ints above 256 are usually distinct objects, so the comparison is `False`; use `==`
+- [ ] the loop should use `enumerate` — without it, `s` is the key, not the dict
+
+> `is` asks "are these the same object?", not "do they have the same value?". CPython caches only small ints (-5..256); `1001` from the literal and `1001` parsed at runtime are different objects, so `is` is `False` even though `==` is `True`. Reserve `is` for singletons like `None`; compare values with `==`.
+
+## quiz: review: Half a star, gone
+tags: code-review, arithmetic
+track: python
+difficulty: easy
+
+You're reviewing this code. What's the bug?
+
+```python
+def average_rating(ratings):
+    return sum(ratings) // len(ratings)
+
+def show(product, ratings):
+    return f"{product}: {average_rating(ratings)} stars"
+
+print(show("mouse", [4, 5, 5, 4]))   # 'mouse: 4 stars' -- true mean is 4.5
+```
+
+- [ ] the f-string formats numbers with zero decimal places by default, dropping the .5
+- [ ] `sum(ratings)` needs a float start value (`sum(ratings, 0.0)`) to avoid integer math
+- [x] `//` is floor division — `18 // 4` is `4`, so the fractional part of the mean is silently discarded; use `/`
+- [ ] `average_rating` only works for an even number of ratings
+
+> `//` floor-divides and quietly throws away the remainder, so every average is rounded down to a whole star. The mean of `[4, 5, 5, 4]` is 4.5, but `18 // 4` yields 4. Use true division `/` (and format as needed); reach for `//` only when you specifically want a floored integer.
+
+## quiz: review: strip() ate the filename
+tags: code-review, strings
+track: python
+difficulty: easy
+
+You're reviewing this code. What's the bug?
+
+```python
+def display_name(filename):
+    return filename.strip(".txt")
+
+for f in ["report.txt", "notes.txt", "test.txt"]:
+    print(display_name(f))
+# repor
+# notes
+# es
+```
+
+- [ ] `strip` only removes whitespace; its argument is ignored
+- [ ] `strip` returns `None` when the suffix is absent, so some names vanish
+- [ ] `strip` is case-sensitive, which is why only some names are damaged
+- [x] `strip(".txt")` treats the argument as a *set of characters* to remove from both ends, not a suffix — use `removesuffix(".txt")`
+
+> `str.strip(chars)` peels off any run of the given characters from *both* ends: for `"test.txt"` it strips leading/trailing `t`, `x`, `.` until it hits a character outside the set, leaving `"es"`. That's why some names look fine and others are mangled — a classically intermittent review trap. Use `filename.removesuffix(".txt")` (3.9+) or check `endswith` and slice.
+
+## quiz: review: Everyone gets the staff discount
+tags: code-review, closures
+track: python
+difficulty: medium
+
+You're reviewing this code. What's the bug?
+
+```python
+def make_discounts(rates):
+    fns = []
+    for rate in rates:
+        fns.append(lambda price: price * (1 - rate))
+    return fns
+
+standard, member, staff = make_discounts([0.05, 0.20, 0.50])
+print(standard(100.0), member(100.0), staff(100.0))
+# 50.0 50.0 50.0 -- every tier gets 50% off
+```
+
+- [ ] `lambda` cannot see loop variables, so `rate` is always the first value, 0.05
+- [x] each lambda closes over the *variable* `rate`, not its value at append time; when called after the loop, all three read the final value 0.50 — bind it with `lambda price, rate=rate: ...`
+- [ ] `fns.append` stores the result of calling the lambda, not the lambda itself
+- [ ] tuple unpacking assigns the functions in reverse order, so `standard` received the staff lambda
+
+> Closures capture variables, not values. All three lambdas share the single loop variable `rate`, and by the time any of them runs the loop has finished with `rate == 0.50`. Freeze the current value per iteration with a default argument (`lambda price, rate=rate: ...`) or `functools.partial`.
+
+## quiz: review: The spam that got away
+tags: code-review, lists
+track: python
+difficulty: medium
+
+You're reviewing this code. What's the bug?
+
+```python
+def remove_banned(words, banned):
+    for w in words:
+        if w in banned:
+            words.remove(w)
+    return words
+
+chat = ["hi", "spam", "spam", "team", "spam"]
+print(remove_banned(chat, {"spam"}))
+# ['hi', 'team', 'spam'] -- one slipped through
+```
+
+- [ ] `words.remove(w)` raises `ValueError` when there are duplicates, aborting the loop early
+- [ ] membership tests against a set only match the first occurrence of each value
+- [x] removing items from the list being iterated shifts later elements left while the iterator's index marches on, so the element right after each removal is never examined
+- [ ] `remove` deletes every occurrence at once, so the loop's bookkeeping is off by the number of duplicates
+
+> The list iterator works by index. When `remove` deletes an element, everything after it shifts left one slot, but the iterator still advances — so the element that slid into the current position is skipped. Consecutive matches therefore survive. Iterate over a copy (`for w in words[:]`) or, better, rebuild: `words[:] = [w for w in words if w not in banned]`.
+
+## quiz: review: The checkpoint that time-travels
+tags: code-review, copying
+track: python
+difficulty: medium
+
+You're reviewing this code. What's the bug?
+
+```python
+import copy
+
+def checkpoint(grid):
+    return copy.copy(grid)
+
+grid = [[0, 0, 0], [0, 0, 0]]
+saved = checkpoint(grid)
+grid[1][2] = 7          # play a move after saving
+print(saved[1][2])      # 7 -- the checkpoint changed retroactively
+```
+
+- [ ] `copy.copy` returns the same object, so `saved is grid`
+- [x] `copy.copy` is shallow: it duplicates the outer list but both grids still share the same row objects, so mutating a cell shows through — use `copy.deepcopy` (or copy each row)
+- [ ] item assignment `grid[1][2] = 7` rebinds the whole row, detaching it from the copy
+- [ ] the fix is to return `grid[:]` — slicing is the only way to get a real copy
+
+> A shallow copy creates a new outer list whose elements are the *same* inner row objects. `saved[1]` and `grid[1]` are one list, so writing a cell "changes the past". Deep-copy nested structures (`copy.deepcopy(grid)`) or copy each level explicitly (`[row[:] for row in grid]`); note `grid[:]` and `list(grid)` are just as shallow as `copy.copy`.
+
+## quiz: review: The groups that never formed
+tags: code-review, dicts
+track: python
+difficulty: medium
+
+You're reviewing this code. What's the bug?
+
+```python
+def group_by_team(pairs):
+    teams = {}
+    for name, team in pairs:
+        teams.get(team, []).append(name)
+    return teams
+
+roster = [("ann", "red"), ("bob", "blue"), ("cai", "red")]
+print(group_by_team(roster))   # {} -- everything vanished
+```
+
+- [ ] `.append` on the result of `.get` raises `AttributeError` for missing keys, which aborts silently
+- [ ] the dict is keyed by team but `get` looks the value up by player name
+- [x] `get(team, [])` returns a brand-new list that is never stored in the dict, so every `append` lands in an object that's immediately discarded — use `setdefault` or `defaultdict(list)`
+- [ ] dicts can't hold list values without wrapping them in `tuple` first
+
+> `dict.get` merely *returns* the default; it doesn't insert it. Each iteration builds a fresh `[]`, appends one name to it, and drops it — the dict never gains a key. `teams.setdefault(team, []).append(name)` stores the list on first use, or use `collections.defaultdict(list)`.
+
+## quiz: review: 100 points, no podium
+tags: code-review, sorting
+track: python
+difficulty: medium
+
+You're reviewing this code. What's the bug?
+
+```python
+def podium(results):
+    scores = [line.split(",")[1] for line in results]
+    return sorted(scores, reverse=True)[:3]
+
+results = ["ann,9", "bob,100", "cai,25", "dan,7"]
+print(podium(results))   # ['9', '7', '25'] -- where did 100 go?
+```
+
+- [ ] `reverse=True` sorts strings ascending because the comparison is inverted twice
+- [ ] `split(",")[1]` grabs the player name, not the score
+- [ ] slicing `[:3]` takes the bottom three; the top three need `[-3:]`
+- [x] the scores are still strings, so they sort lexicographically (`'9' > '100'` because `'9' > '1'`) — convert to int, or pass `key=int`
+
+> Splitting a CSV line yields strings, and strings compare character by character: `'9'` beats `'100'` because `'9' > '1'`. The sort runs fine and looks plausible on small same-width data, then misranks the moment digits differ in count. Convert early (`int(line.split(",")[1])`) or sort with `key=int`.
+
+## quiz: review: The sum of an empty tank
+tags: code-review, generators
+track: python
+difficulty: medium
+
+You're reviewing this code. What's the bug?
+
+```python
+def stats(readings):
+    valid = (r for r in readings if r >= 0)
+    n = sum(1 for _ in valid)
+    total = sum(valid)
+    return n, total
+
+print(stats([3.0, -1.0, 5.0]))   # (2, 0) -- two readings totalling zero?
+```
+
+- [ ] generator expressions always skip their first element on the second pass
+- [x] the counting pass exhausts the generator, so `sum(valid)` iterates over nothing and returns 0 — materialize once with `list(...)` and reuse it
+- [ ] `sum(1 for _ in valid)` consumes only the truthy readings, leaving the rest for `total`
+- [ ] the filter should be `r > 0`; including zero readings zeroes out the total
+
+> A generator is a one-shot stream: once the counting loop pulls every item, it's empty forever, so the second `sum` sees nothing and returns 0. Either materialize (`valid = [r for r in readings if r >= 0]`) and reuse the list, or compute both aggregates in a single pass.
+
+## quiz: review: Zero retries means five retries
+tags: code-review, truthiness
+track: python
+difficulty: medium
+
+You're reviewing this code. What's the bug?
+
+```python
+def retry_limit(config):
+    return config.get("retries") or 5
+
+print(retry_limit({"retries": 0}))   # 5 -- user explicitly disabled retries
+print(retry_limit({}))               # 5
+```
+
+- [ ] `config.get` returns `False` (not `None`) for missing keys, confusing the `or`
+- [x] `or` returns its left operand unless it's falsy — and `0` is falsy — so an explicit `retries: 0` is indistinguishable from a missing key; use `config.get("retries", 5)` or an `is None` check
+- [ ] `or` evaluates both sides and returns whichever is larger
+- [ ] the default belongs on the left: `5 or config.get("retries")`
+
+> `x or y` doesn't mean "x, defaulting to y when absent" — it means "y whenever x is falsy", and `0`, `""`, `[]` are all falsy. A user who deliberately set `retries: 0` silently gets 5. Only `None` should trigger the default: `config.get("retries", 5)`, or fetch then test `if value is None`.
+
+## quiz: review: The cleaner that cleans nothing
+tags: code-review, exceptions
+track: python
+difficulty: hard
+
+You're reviewing this code. What's the bug?
+
+```python
+def normalize_emails(entries):
+    out = []
+    for e in entries:
+        try:
+            out.append(e.strip().lowercase())
+        except Exception:
+            pass   # skip bad entries
+    return out
+
+print(normalize_emails(["Ann@Example.COM ", "bob@test.org"]))  # []
+```
+
+- [ ] `strip()` fails on strings that have no surrounding whitespace, so those entries are skipped
+- [ ] `pass` should be `continue`; without it the loop exits after the first bad entry
+- [x] `except Exception` silently swallows the `AttributeError` from the typo `lowercase` (the method is `str.lower`), so *every* entry is "skipped" and the code bug never surfaces — narrow the except to what can legitimately fail
+- [ ] `out.append` returns `None`, so the appended values are lost
+
+> There is no `str.lowercase`; every iteration raises `AttributeError`, and the blanket `except Exception: pass` converts that programming error into silently empty output. Broad excepts don't just skip bad data — they bury your own bugs. Catch the specific exceptions the data can cause (here: none for stripping/lowering a str), and let everything else propagate.
+
+## quiz: review: A cent short at the register
+tags: code-review, shadowing
+track: python
+difficulty: hard
+
+You're reviewing this code. What's the bug?
+
+```python
+def round(x, ndigits=0):
+    """Fast rounding without float noise."""
+    p = 10 ** ndigits
+    return int(x * p) / p
+
+def total_with_tax(subtotal, rate):
+    return round(subtotal * (1 + rate), 2)
+
+print(total_with_tax(19.99, 0.0825))   # 21.63 -- register says 21.64
+```
+
+- [ ] `10 ** ndigits` is integer math and overflows for `ndigits=2`
+- [ ] floats can't represent 19.99 exactly, so the bug is in the literal, not the code
+- [x] the helper shadows the built-in `round` with different semantics — `int()` truncates toward zero instead of rounding to nearest — so every total is systematically up to a cent low; rename the helper (and don't reimplement rounding via `int`)
+- [ ] `total_with_tax` runs before the module finishes loading, so it still calls the builtin
+
+> Defining a module-level `round` shadows the builtin for the whole module, and this version truncates (`int(2163.917...) == 2163`) instead of rounding to nearest, so `21.639...` becomes `21.63` rather than `21.64`. Shadowing a builtin with subtly different behavior is a silent, module-wide change — reviewers should flag any def/assignment that reuses a builtin name; if custom rounding is really needed, give it its own name.
+
+## quiz: Does string + int run?
+tags: types, errors
+track: python
+difficulty: easy
+
+You concatenate a string literal with an integer variable.
+
+```python
+age = 30
+print("Age: " + age)
+```
+
+- [ ] Prints `Age: 30` — the int is converted automatically
+- [x] Raises `TypeError`
+- [ ] Prints `Age: age`
+- [ ] `SyntaxError` — you cannot add different types
+
+> Python never implicitly converts an `int` to `str` for `+`; the code is syntactically fine but raises `TypeError: can only concatenate str (not "int") to str` at runtime. You must convert explicitly with `str(age)` or use an f-string. This is a deliberate design choice — silent coercion (as in JavaScript) hides bugs.
+
+## quiz: Assigning into a tuple
+tags: tuples, errors
+track: python
+difficulty: easy
+
+You try to replace the first element of a tuple.
+
+```python
+t = (1, 2, 3)
+t[0] = 99
+print(t)
+```
+
+- [ ] Prints `(99, 2, 3)`
+- [ ] `SyntaxError` — tuples cannot appear on the left of `=`
+- [x] Raises `TypeError`
+- [ ] Prints `(1, 2, 3)` — the assignment is silently ignored
+
+> Tuples are immutable: they do not implement item assignment, so `t[0] = 99` raises `TypeError: 'tuple' object does not support item assignment` at runtime. It is not a syntax error — the parser accepts it, and the failure only happens when the assignment executes. To "change" a tuple you must build a new one.
+
+## quiz: dict .get vs [] lookup
+tags: dicts, errors
+track: python
+difficulty: easy
+
+Both lines look up a key that is not in the dict.
+
+```python
+d = {"a": 1}
+print(d.get("b"))
+print(d["b"])
+```
+
+- [ ] Prints `None` twice
+- [ ] Raises `KeyError` on the first line — nothing is printed
+- [x] Prints `None`, then raises `KeyError`
+- [ ] Prints `None`, then `False`
+
+> `.get(key)` returns `None` (or a supplied default) when the key is missing, so the first line prints `None`. Subscript lookup `d["b"]` is strict and raises `KeyError: 'b'`. Since the first `print` completes before the second line runs, you see output followed by the traceback.
+
+## quiz: Slice past the end vs index past the end
+tags: strings, slicing
+track: python
+difficulty: easy
+
+The string has only three characters; every access goes past the end.
+
+```python
+s = "abc"
+print(s[1:10])
+print(s[10:])
+print(s[10])
+```
+
+- [ ] Raises `IndexError` on the first line
+- [ ] Prints `bc`, then raises `IndexError` on `s[10:]`
+- [x] Prints `bc`, then an empty line, then raises `IndexError`
+- [ ] Prints `bc`, then an empty line, then `None`
+
+> Slices are clamped to the sequence bounds and never raise: `s[1:10]` gives `"bc"` and `s[10:]` gives `""`. Plain indexing is strict, so `s[10]` raises `IndexError: string index out of range`. Remember: slices are forgiving, indexes are not.
+
+## quiz: / vs // with a negative number
+tags: numbers, operators
+track: python
+difficulty: easy
+
+Compare true division, floor division, and floor division of a negative.
+
+```python
+print(7 / 2)
+print(7 // 2)
+print(-7 // 2)
+```
+
+- [ ] `3.5`, `3`, `-3`
+- [x] `3.5`, `3`, `-4`
+- [ ] `3`, `3`, `-3`
+- [ ] `3.5`, `3.5`, `-3.5`
+
+> In Python 3, `/` always produces a float (`3.5`) and `//` floors the result. Flooring rounds toward negative infinity, not toward zero, so `-7 // 2` is `-4` (since -3.5 floors down to -4), not `-3` as C-style truncation would give. This trips up people coming from C or Java.
+
+## quiz: Unpacking three values into two names
+tags: unpacking, errors
+track: python
+difficulty: easy
+
+A three-element list is unpacked into two variables.
+
+```python
+data = [1, 2, 3]
+a, b = data
+print(a, b)
+```
+
+- [ ] Prints `1 2` — the extra value is dropped
+- [ ] Prints `1 [2, 3]`
+- [ ] `SyntaxError`
+- [x] Raises `ValueError`
+
+> Tuple/list unpacking requires the number of targets to match the number of items exactly, so this raises `ValueError: too many values to unpack (expected 2, got 3)`. Nothing is silently dropped. To absorb the extras you need a starred target: `a, *b = data` gives `a=1, b=[2, 3]`.
+
+## quiz: Arithmetic on booleans
+tags: bool, numbers
+track: python
+difficulty: easy
+
+Booleans are used directly in arithmetic and comparison.
+
+```python
+print(True + True)
+print(sum([True, False, True]))
+print(True == 1)
+```
+
+- [x] `2`, `2`, `True`
+- [ ] Raises `TypeError` — you cannot add booleans
+- [ ] `TrueTrue`, `2`, `True`
+- [ ] `2`, `2`, `False`
+
+> `bool` is a subclass of `int` with `True == 1` and `False == 0`, so `True + True` is `2` and `sum` over booleans counts the `True`s — a common idiom like `sum(x > 0 for x in xs)`. The comparison `True == 1` is genuinely `True`, not just truthy.
+
+## quiz: Shadowing the list builtin
+tags: builtins, errors
+track: python
+difficulty: easy
+
+A variable named `list` is created, then `list(...)` is called.
+
+```python
+list = [1, 2, 3]
+squares = list(range(3))
+print(squares)
+```
+
+- [ ] Prints `[0, 1, 2]`
+- [ ] `SyntaxError` — `list` is a reserved word
+- [x] Raises `TypeError`
+- [ ] Raises `NameError`
+
+> `list` is not a keyword, just a name in the builtins scope, so assigning to it is legal and shadows the builtin. The call `list(range(3))` then tries to call the list object `[1, 2, 3]`, raising `TypeError: 'list' object is not callable`. Avoid naming variables `list`, `dict`, `str`, `sum`, `id`, etc.
+
+## quiz: Mutating a list inside a tuple
+tags: tuples, mutability
+track: python
+difficulty: medium
+
+The tuple itself is immutable, but its second element is a list.
+
+```python
+t = ("a", [1, 2])
+t[1].append(3)
+print(t)
+```
+
+- [ ] Raises `TypeError` — tuples are immutable
+- [x] Prints `('a', [1, 2, 3])`
+- [ ] Prints `('a', [1, 2])` — the change does not stick
+- [ ] Raises `AttributeError`
+
+> Tuple immutability only means the tuple's slots cannot be rebound — the objects inside can still be mutated. `t[1]` is an ordinary read (allowed), and `.append` mutates the list in place without touching the tuple's structure. So this runs fine and prints `('a', [1, 2, 3])`.
+
+## quiz: Consuming a generator twice
+tags: generators, iteration
+track: python
+difficulty: medium
+
+The same generator object is passed to `list` twice.
+
+```python
+g = (x * x for x in range(3))
+print(list(g))
+print(list(g))
+```
+
+- [ ] Prints `[0, 1, 4]` twice
+- [ ] Prints `[0, 1, 4]`, then raises `StopIteration`
+- [x] Prints `[0, 1, 4]`, then `[]`
+- [ ] Raises `TypeError` — a generator can only be iterated once
+
+> Generators are single-use iterators: the first `list(g)` drains it, and internally the generator raises `StopIteration` when done. Iterating an exhausted generator is not an error — `list` catches `StopIteration` and simply produces an empty list. If you need two passes, rebuild the generator or use a list.
+
+## quiz: When does the genexp divide by zero?
+tags: generators, errors
+track: python
+difficulty: medium
+
+A generator expression divides by each number, and the list contains a zero.
+
+```python
+nums = [1, 0, 2]
+results = (10 // n for n in nums)
+print("created")
+print(list(results))
+```
+
+- [ ] Raises `ZeroDivisionError` on line 2 — nothing is printed
+- [ ] Prints `created`, then `[10, 0, 5]`
+- [x] Prints `created`, then raises `ZeroDivisionError`
+- [ ] Prints `created`, then `[10, 5]` — the bad value is skipped
+
+> Generator expressions are lazy: creating one does no division at all, so line 2 succeeds and `created` prints. The `ZeroDivisionError` only fires when `list(results)` pulls the second item and evaluates `10 // 0`. Lazy evaluation moves errors from creation time to consumption time — a classic debugging trap.
+
+## quiz: Read before assignment inside a function
+tags: scope, errors
+track: python
+difficulty: medium
+
+The function reads `count` before assigning to it later in the body.
+
+```python
+count = 0
+def bump():
+    print(count)
+    count = 1
+bump()
+```
+
+- [ ] Prints `0` — the global is visible until the assignment
+- [ ] Prints `0`, and the global becomes `1`
+- [x] Raises `UnboundLocalError`
+- [ ] Raises `NameError: name 'count' is not defined`
+
+> Scope is decided at compile time for the whole function: because `count = 1` appears anywhere in the body, `count` is local everywhere in `bump`. The `print` therefore reads a local that has no value yet, raising `UnboundLocalError` (a subclass of `NameError`, but reported distinctly). Declaring `global count` would make it print `0`.
+
+## quiz: Does the comprehension variable leak?
+tags: scope, comprehensions
+track: python
+difficulty: medium
+
+A list comprehension reuses the name `x` that already exists outside.
+
+```python
+x = "outer"
+squares = [x * x for x in range(3)]
+print(x)
+```
+
+- [x] Prints `outer`
+- [ ] Prints `2` — the loop variable leaks out
+- [ ] Prints `4` — the last computed square
+- [ ] Raises `NameError`
+
+> In Python 3 a comprehension runs in its own scope, so its loop variable `x` is completely separate from the outer `x` and does not leak. The outer binding is untouched and `outer` prints. (In Python 2 list comprehensions did leak, which is exactly why this was changed.) A plain `for` loop, by contrast, still leaks its variable.
+
+## quiz: Where does the walrus variable live?
+tags: walrus, scope
+track: python
+difficulty: medium
+
+`n` is bound with `:=` inside the `if` condition, then used after the block.
+
+```python
+data = [4, 8, 15]
+if (n := len(data)) > 2:
+    print("big")
+print(n)
+```
+
+- [ ] Prints `big`, then raises `NameError` — `n` only exists in the condition
+- [x] Prints `big`, then `3`
+- [ ] `SyntaxError` — `:=` is not allowed inside `if`
+- [ ] Prints `big`, then `True`
+
+> The walrus operator `:=` (Python 3.8+) assigns and yields the value in one expression, and the name goes into the enclosing function/module scope — Python has no block scope. So `n` is `3`, the condition is true, and `n` remains visible after the `if`. Note it binds the length, not the comparison result.
+
+## quiz: Chained comparison with in
+tags: comparisons, gotcha
+track: python
+difficulty: medium
+
+This looks like it checks that membership is `True`.
+
+```python
+a = [1]
+print(1 in a == True)
+```
+
+- [ ] Prints `True`
+- [x] Prints `False`
+- [ ] `SyntaxError` — `in` and `==` cannot be mixed
+- [ ] Raises `TypeError`
+
+> `in` and `==` are both comparison operators, so this chains: `1 in a == True` means `(1 in a) and (a == True)`. The first part is `True`, but `[1] == True` is `False`, so the whole thing prints `False`. Chaining is great for `0 < x < 10` but silently produces nonsense when you mix membership and equality — parenthesize `(1 in a) == True`, or just drop the comparison.
+
+## quiz: Lambdas created in a loop
+tags: closures, gotcha
+track: python
+difficulty: medium
+
+Three lambdas capture the comprehension variable `i`.
+
+```python
+funcs = [lambda: i for i in range(3)]
+print([f() for f in funcs])
+```
+
+- [ ] Prints `[0, 1, 2]`
+- [x] Prints `[2, 2, 2]`
+- [ ] Raises `NameError` — `i` is gone when the lambdas run
+- [ ] Prints `[3, 3, 3]`
+
+> Closures capture the variable, not its value at creation time. All three lambdas share the same `i` cell, which holds `2` after the loop finishes, so each call returns `2`. The variable outlives the comprehension inside the closure cells, so there is no `NameError`. The standard fix is a default argument: `lambda i=i: i`, which snapshots the value.
+
+## quiz: Sorting a mixed list
+tags: sorting, errors
+track: python
+difficulty: medium
+
+The list mixes ints and a string, then gets sorted.
+
+```python
+items = [3, "1", 2]
+items.sort()
+print(items)
+```
+
+- [ ] Prints `["1", 2, 3]` — strings sort first
+- [ ] Prints `[2, 3, "1"]` — ints sort first
+- [x] Raises `TypeError`
+- [ ] Prints `[1, 2, 3]` — the string is converted
+
+> Sorting compares elements pairwise with `<`, and Python 3 refuses to order unrelated types: `'1' < 3` raises `TypeError: '<' not supported between instances of 'str' and 'int'`. (Python 2 allowed this with an arbitrary but consistent order.) To sort mixed data you must supply a key, e.g. `items.sort(key=int)` or `key=str`.
+
+## quiz: When is an f-string evaluated?
+tags: f-strings, evaluation
+track: python
+difficulty: medium
+
+The variable changes after the f-string is created but before it is printed.
+
+```python
+x = 1
+msg = f"x is {x}"
+x = 2
+print(msg)
+```
+
+- [x] Prints `x is 1`
+- [ ] Prints `x is 2` — f-strings resolve when printed
+- [ ] Prints `x is {x}`
+- [ ] Raises `NameError`
+
+> An f-string is an expression evaluated immediately where it appears — it interpolates `x` at assignment time, producing the plain string `"x is 1"`. Rebinding `x` afterwards cannot affect a string that already exists. F-strings are not lazy templates; for deferred substitution you would use `str.format` on a template string later.
+
+## quiz: else on a for loop
+tags: loops, else
+track: python
+difficulty: medium
+
+A search loop over odd numbers has an `else` clause.
+
+```python
+for n in [1, 3, 5]:
+    if n % 2 == 0:
+        print("found even")
+        break
+else:
+    print("no even found")
+```
+
+- [ ] `SyntaxError` — `else` cannot attach to `for`
+- [ ] Prints nothing — the `else` belongs to the `if`, which is never true
+- [x] Prints `no even found`
+- [ ] Prints `no even found` three times, once per iteration
+
+> A `for` loop can have an `else` clause that runs only if the loop finishes without hitting `break`. No element here is even, so `break` never fires and the `else` body runs exactly once after the loop. Think of it as "no-break". Indentation makes it the loop's `else`, not the `if`'s.
+
+## quiz: Deleting dict keys while iterating
+tags: dicts, errors
+track: python
+difficulty: medium
+
+A key is deleted from the dict inside a loop over that same dict.
+
+```python
+d = {"a": 1, "b": 2}
+for k in d:
+    if d[k] == 1:
+        del d[k]
+print(d)
+```
+
+- [ ] Prints `{'b': 2}`
+- [ ] Prints `{'a': 1, 'b': 2}` — the deletion is deferred
+- [ ] Raises `KeyError`
+- [x] Raises `RuntimeError`
+
+> Adding or removing keys while iterating over a dict invalidates the iterator, and Python detects it on the next step: `RuntimeError: dictionary changed size during iteration`. Overwriting values of existing keys is fine; changing the key set is not. The idiomatic fix is to iterate over a snapshot — `for k in list(d):` — or build a new dict comprehension.
+
+## quiz: += on a list stored in a tuple
+tags: tuples, gotcha
+track: python
+difficulty: hard
+
+Augmented assignment targets a tuple slot that holds a list.
+
+```python
+t = ([1, 2],)
+try:
+    t[0] += [3]
+except TypeError:
+    print("TypeError")
+print(t)
+```
+
+- [ ] Prints `([1, 2, 3],)` only — no exception, `+=` mutates the list
+- [ ] Prints `TypeError` then `([1, 2],)` — the exception prevents any change
+- [x] Prints `TypeError` then `([1, 2, 3],)` — it raises AND the list changed
+- [ ] Raises `SyntaxError`
+
+> `t[0] += [3]` executes in two steps: first `list.__iadd__` extends the list in place (this succeeds — the list is now `[1, 2, 3]`), then Python tries to store the result back with `t[0] = ...`, which fails because tuples reject item assignment. So the `TypeError` is raised after the mutation already happened. It is Python's most famous "fails and succeeds at the same time" snippet.
+
+## quiz: global declared inside a nested function
+tags: scope, global
+track: python
+difficulty: hard
+
+`inner` declares `global x` while an enclosing `outer` also has its own `x`.
+
+```python
+x = "global"
+def outer():
+    x = "outer"
+    def inner():
+        global x
+        x = "changed"
+    inner()
+    print(x)
+outer()
+print(x)
+```
+
+- [ ] Prints `changed` then `changed`
+- [x] Prints `outer` then `changed`
+- [ ] Prints `outer` then `global`
+- [ ] Raises `SyntaxError` — `global` is not allowed in a nested function
+
+> `global` skips all enclosing function scopes and binds directly to the module level, so `inner` rewrites the module's `x` and leaves `outer`'s local `x` untouched — hence `outer` prints first, then `changed`. To rebind the enclosing function's variable instead, `inner` would need `nonlocal x`, which would print `changed` then `global`.
+
+## quiz: try/except/else/finally order
+tags: exceptions, control-flow
+track: python
+difficulty: hard
+
+The same function runs once without and once with an exception.
+
+```python
+def check(n):
+    try:
+        10 // n
+    except ZeroDivisionError:
+        print("except")
+    else:
+        print("else")
+    finally:
+        print("finally")
+check(2)
+check(0)
+```
+
+- [ ] `else`, `finally`, `except`, `else`, `finally`
+- [ ] `else`, `except`, `finally`, `finally`
+- [x] `else`, `finally`, `except`, `finally`
+- [ ] `finally`, `else`, `finally`, `except`
+
+> The `else` block runs only when the `try` body raised nothing, and it is skipped entirely when an exception was caught — `else` and `except` are mutually exclusive. `finally` runs unconditionally, last, in both cases. So `check(2)` prints `else`, `finally` and `check(0)` prints `except`, `finally`.
+
+## quiz: Infinite recursion — hang or crash?
+tags: recursion, errors
+track: python
+difficulty: hard
+
+The function calls itself unconditionally with no base case.
+
+```python
+def depth(n):
+    return depth(n + 1)
+print(depth(0))
+```
+
+- [ ] Hangs forever — you must kill the process
+- [ ] Crashes the interpreter with a segmentation fault
+- [x] Raises `RecursionError`
+- [ ] Raises `StackOverflowError`
+
+> CPython guards its call stack with a recursion limit (about 1000 by default, see `sys.getrecursionlimit()`), and blowing past it raises `RecursionError: maximum recursion depth exceeded` — a catchable Python exception, not a hang or a hard crash. `StackOverflowError` is Java, not Python. Python also does no tail-call optimization, so rewriting this as a "tail call" would not help.
+
+## quiz: Do two calls share the default list?
+tags: functions, gotcha
+track: python
+difficulty: hard
+
+Two separate calls each rely on the default `bucket`, then identity is checked.
+
+```python
+def collect(x, bucket=[]):
+    bucket.append(x)
+    return bucket
+a = collect(1)
+b = collect(2)
+print(a is b, a)
+```
+
+- [ ] Prints `False [1]` — each call gets a fresh list
+- [ ] Prints `True [2]` — the second call replaces the contents
+- [x] Prints `True [1, 2]`
+- [ ] Raises `TypeError` — mutable defaults are not allowed
+
+> Default values are evaluated once, at `def` time, and stored on the function object — every call that omits `bucket` gets the same list. Both calls append to that one object, so `a` and `b` are the same list (`a is b` is `True`) containing `[1, 2]`. The idiom to get a fresh list per call is `bucket=None` plus `if bucket is None: bucket = []`.
 
 ## quiz: You pay a fixed price to roll one fair six-sided die and are paid its face value in dollars. What is the fair price?
 tags: expected-value, dice
