@@ -228,6 +228,11 @@ body::before {
   margin: 0 auto;
   z-index: 4;
 }
+/* ── the ⚙ panel: invisible wrapper on desktop, slide-down sheet on mobile ── */
+.panel-btn, .sheet-grab, .sheet-label, .sheet-apply { display: none; }
+.sheet-backdrop { display: none; }
+#diffChips { display: none; }   /* desktop uses the header cycle button */
+
 /* second row: language/topic tracks */
 .chips-tracks { padding-top: 0; }
 .chips-tracks .chip.active {
@@ -853,9 +858,56 @@ kbd {
 
   .card-body { padding: 18px 16px 20px; }
 
-  /* thumb-sized filter chips (were ~24px tall) + a scroll cue */
+  /* thumb-sized filter chips */
   .chip { padding: 10px 16px; font-size: 13px; }
-  .chips { -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent); }
+
+  /* one-line header: "$ view" + the ⚙ button. Everything else lives in
+     the panel (app.js moves the stats strip in) or the bottom nav. */
+  .topbar .stats { display: none; }
+  .topbar { justify-content: space-between; }
+  .view-title { font-family: var(--mono); font-weight: 700; font-size: 15px; color: var(--ink); }
+  .view-title::before { content: "$ "; color: var(--faint); font-weight: 400; }
+  .panel-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; flex: 0 0 auto;
+    font-size: 17px; color: var(--ink);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .panel-btn[aria-expanded="true"] { color: var(--lime); border-color: var(--lime); }
+
+  /* the panel itself: slides down from under the header */
+  .filter-sheet {
+    position: fixed;
+    left: 0; right: 0;
+    top: calc(var(--topbar-h) + env(safe-area-inset-top));
+    z-index: 35;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 4px 16px 16px;
+    max-height: 72vh;
+    overflow-y: auto;
+    transform: translateY(-115%);
+    transition: transform 0.25s ease;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
+  }
+  .filter-sheet.open { transform: translateY(0); }
+  .sheet-backdrop { display: block; position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, 0.45); }
+  .sheet-backdrop[hidden] { display: none; }
+  .sheet-label {
+    display: block;
+    font-family: var(--mono); font-size: 10.5px; color: var(--faint);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin: 12px 0 6px;
+  }
+  #diffChips { display: flex; }
+  .filter-sheet .chips { flex-wrap: wrap; overflow: visible; padding: 0; }
+  .filter-sheet .stats {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-top: 12px; overflow: visible;
+  }
+  /* chips replace these two inside the panel */
+  .filter-sheet #modeToggle, .filter-sheet #diffToggle { display: none; }
+  .sheet-apply { display: block; width: 100%; margin-top: 14px; }
 
   /* header nav hidden on mobile — replaced by the real bottom bar below */
   .topnav { display: none; }

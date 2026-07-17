@@ -47,19 +47,28 @@
     <button class="stat install-btn" id="installBtn" title="install app" hidden>install ⤓</button>
     <button class="stat theme-btn" id="themeToggle" title="day / night">☀</button>
   </div>
+  <button class="panel-btn" id="panelBtn" aria-label="stats and filters" aria-expanded="false">⚙</button>
 </header>
 
-<nav class="chips" id="chips" aria-label="card type filter">
-  <button class="chip active" data-filter="all">all</button>
-  <button class="chip" data-filter="fact">facts</button>
-  <button class="chip" data-filter="quiz">quiz</button>
-  <button class="chip" data-filter="exercise">write</button>
-  <button class="chip" data-filter="challenge">challenges</button>
-  <button class="chip" data-filter="snippet">snippets</button>
-  <button class="chip chip-review" data-filter="review">review <span class="due-badge" id="dueCount" hidden></span></button>
-</nav>
-
-<nav class="chips chips-tracks" id="trackChips" aria-label="track filter"></nav>
+<div class="sheet-backdrop" id="sheetBackdrop" hidden></div>
+<div class="filter-sheet" id="filterSheet">
+  <div class="sheet-grab" aria-hidden="true"></div>
+  <div class="sheet-label">type</div>
+  <nav class="chips" id="chips" aria-label="card type filter">
+    <button class="chip active" data-filter="all">all</button>
+    <button class="chip" data-filter="fact">facts</button>
+    <button class="chip" data-filter="quiz">quiz</button>
+    <button class="chip" data-filter="exercise">write</button>
+    <button class="chip" data-filter="challenge">challenges</button>
+    <button class="chip" data-filter="snippet">snippets</button>
+    <button class="chip chip-review" data-filter="review">review <span class="due-badge" id="dueCount" hidden></span></button>
+  </nav>
+  <div class="sheet-label">track</div>
+  <nav class="chips chips-tracks" id="trackChips" aria-label="track filter"></nav>
+  <div class="sheet-label">difficulty</div>
+  <nav class="chips" id="diffChips" aria-label="difficulty filter"></nav>
+  <button class="btn btn-check sheet-apply" id="sheetApply">show cards ▸</button>
+</div>
 
 <main class="feed" id="feed">
   <div class="loading">compiling today's mix<span class="dots"></span></div>

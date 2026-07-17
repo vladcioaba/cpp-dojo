@@ -651,6 +651,8 @@ function applyFilters() {
   } else if (filter !== "all") {
     cards = cards.filter(c => c.type === filter);
   }
+  const applyBtn = document.getElementById("sheetApply");
+  if (applyBtn) applyBtn.textContent = `show ${cards.length} card${cards.length === 1 ? "" : "s"} ▸`;
   render(cards, filter === "review");
   renderDeepLinkBanner();
   feed.scrollTop = 0;
@@ -684,7 +686,8 @@ document.getElementById("chips").addEventListener("click", e => {
   applyFilters();
 });
 
-/* Difficulty: cycles any → easy → medium → hard (filters problems). */
+/* Difficulty: header button cycles it; the panel's chips set it directly.
+   Both repaint through one place. */
 const DIFFS = [
   { id: "all", label: "◇ any level" },
   { id: "easy", label: "● easy" },
@@ -692,20 +695,51 @@ const DIFFS = [
   { id: "hard", label: "● hard" },
 ];
 const diffBtn = document.getElementById("diffToggle");
-if (diffBtn) {
-  const paint = () => {
+const diffChips = document.getElementById("diffChips");
+function paintDifficulty() {
+  if (diffBtn) {
     const d = DIFFS.find(x => x.id === difficulty) || DIFFS[0];
     diffBtn.textContent = d.label;
     diffBtn.className = "stat diff-btn" + (difficulty === "all" ? "" : " diff-" + difficulty);
     diffBtn.setAttribute("aria-pressed", difficulty !== "all");
+  }
+  diffChips?.querySelectorAll(".chip").forEach(c => {
+    c.classList.toggle("active", c.dataset.diff === difficulty);
+    c.setAttribute("aria-pressed", c.dataset.diff === difficulty);
+  });
+}
+function setDifficulty(id) { difficulty = id; paintDifficulty(); applyFilters(); }
+if (diffBtn) diffBtn.onclick = () => {
+  const i = DIFFS.findIndex(x => x.id === difficulty);
+  setDifficulty(DIFFS[(i + 1) % DIFFS.length].id);
+};
+if (diffChips) {
+  diffChips.innerHTML = DIFFS.map(d => `<button class="chip" data-diff="${d.id}">${d.label}</button>`).join("");
+  diffChips.addEventListener("click", e => {
+    const c = e.target.closest(".chip");
+    if (c) setDifficulty(c.dataset.diff);
+  });
+}
+paintDifficulty();
+
+/* ── the ⚙ panel: stats + all filters live behind the top-right button ── */
+const panelBtn = document.getElementById("panelBtn");
+const sheet = document.getElementById("filterSheet");
+const sheetBackdrop = document.getElementById("sheetBackdrop");
+if (panelBtn && sheet) {
+  // on phones the header stats strip moves into the panel
+  if (matchMedia("(max-width: 640px)").matches) {
+    const st = document.querySelector(".topbar .stats");
+    if (st) sheet.prepend(st);
+  }
+  const openSheet = o => {
+    sheet.classList.toggle("open", o);
+    if (sheetBackdrop) sheetBackdrop.hidden = !o;
+    panelBtn.setAttribute("aria-expanded", String(o));
   };
-  diffBtn.onclick = () => {
-    const i = DIFFS.findIndex(x => x.id === difficulty);
-    difficulty = DIFFS[(i + 1) % DIFFS.length].id;
-    paint();
-    applyFilters();
-  };
-  paint();
+  panelBtn.onclick = () => openSheet(!sheet.classList.contains("open"));
+  sheetBackdrop?.addEventListener("click", () => openSheet(false));
+  document.getElementById("sheetApply")?.addEventListener("click", () => openSheet(false));
 }
 
 /* Track filter: visible chip row (language/topic) + header button that

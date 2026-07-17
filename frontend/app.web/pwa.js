@@ -30,8 +30,19 @@ function buildBottomNav() {
   document.body.appendChild(nav);
 }
 
-if (document.body) buildBottomNav();
-else addEventListener("DOMContentLoaded", buildBottomNav);
+/* mobile header = one line: "$ <current view>" (the full terminal path +
+   info rows collapse into the ⚙ panel / bottom nav) */
+function mobileHeader() {
+  if (!matchMedia("(max-width: 640px)").matches) return;
+  const cur = currentPage();
+  const label = (NAV.find(n => n[1] === cur) || ["cpp-grandfather"])[0];
+  const logo = document.querySelector(".topbar .logo");
+  if (logo) logo.innerHTML = `<span class="view-title">${label}</span>`;
+}
+
+function bootShell() { buildBottomNav(); mobileHeader(); }
+if (document.body) bootShell();
+else addEventListener("DOMContentLoaded", bootShell);
 
 /* ── service worker ──────────────────────────────────────────── */
 if ("serviceWorker" in navigator) {
