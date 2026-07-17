@@ -46,6 +46,7 @@ function mobileHeader() {
 function buildShellPanel() {
   if (!matchMedia("(max-width: 640px)").matches) return;
   if (document.getElementById("panelBtn")) return;   // page brought its own
+  if (currentPage() === "filters.html") return;      // that page IS the panel
   const topbar = document.querySelector(".topbar");
   const stats = document.querySelector(".topbar .stats");
   const labTabs = document.getElementById("labTabs");

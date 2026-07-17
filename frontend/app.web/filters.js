@@ -68,3 +68,9 @@ try {
   document.getElementById("streak").textContent = st.streak || 0;
   document.getElementById("xp").textContent = st.xp || 0;
 } catch { /* fresh device */ }
+
+/* on phones the header stats strip is hidden — theme lives here instead */
+if (matchMedia("(max-width: 640px)").matches) {
+  const t = document.getElementById("themeToggle");
+  if (t) document.querySelector(".flt-stats")?.appendChild(t);
+}
