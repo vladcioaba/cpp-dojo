@@ -611,7 +611,7 @@ function dailyMix(cards) {
 /* ── boot ────────────────────────────────────────────────────── */
 
 let allCards = [];
-let filter = "all";
+let filter = localStorage.getItem("cppdojo-typefilter") || "all"; // set here or on the filter tab
 // track cycles the whole feed through topic tracks
 const CPP_TRACKS = ["core", "faang", "hft", "design"]; // everything written in C++
 const TRACKS = [
@@ -638,7 +638,7 @@ const _params = new URLSearchParams(location.search);
 let tagFilter = (_params.get("tags") || "").split(",").map(s => s.trim()).filter(Boolean);
 const cardFocus = _params.get("card");
 
-let difficulty = "all"; // all | easy | medium | hard
+let difficulty = localStorage.getItem("cppdojo-diff") || "all"; // all | easy | medium | hard
 
 function applyFilters() {
   let cards = allCards;
@@ -674,6 +674,11 @@ function renderDeepLinkBanner() {
   };
 }
 
+document.querySelectorAll("#chips .chip").forEach(c => {
+  const on = c.dataset.filter === filter;
+  c.classList.toggle("active", on);
+  c.setAttribute("aria-pressed", on);
+});
 document.getElementById("chips").addEventListener("click", e => {
   const chip = e.target.closest(".chip");
   if (!chip) return;
@@ -682,6 +687,7 @@ document.getElementById("chips").addEventListener("click", e => {
     c.setAttribute("aria-pressed", c === chip);
   });
   filter = chip.dataset.filter;
+  localStorage.setItem("cppdojo-typefilter", filter);
   tagFilter = []; // an explicit chip choice clears a skill deep-link
   applyFilters();
 });
@@ -708,7 +714,7 @@ function paintDifficulty() {
     c.setAttribute("aria-pressed", c.dataset.diff === difficulty);
   });
 }
-function setDifficulty(id) { difficulty = id; paintDifficulty(); applyFilters(); }
+function setDifficulty(id) { difficulty = id; localStorage.setItem("cppdojo-diff", id); paintDifficulty(); applyFilters(); }
 if (diffBtn) diffBtn.onclick = () => {
   const i = DIFFS.findIndex(x => x.id === difficulty);
   setDifficulty(DIFFS[(i + 1) % DIFFS.length].id);

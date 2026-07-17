@@ -6,6 +6,7 @@
 const NAV = [
   ["today", "today.html"],
   ["feed", "index.html"],
+  ["filter", "filters.html"],
   ["skills", "skills.html"],
   ["labs", "labs.html"],
   ["sprint", "sprint.html"],

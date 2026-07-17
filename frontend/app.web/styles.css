@@ -231,7 +231,7 @@ body::before {
 /* ── the ⚙ panel: invisible wrapper on desktop, slide-down sheet on mobile ── */
 .panel-btn, .sheet-grab, .sheet-label, .sheet-apply { display: none; }
 .sheet-backdrop { display: none; }
-#diffChips { display: none; }   /* desktop uses the header cycle button */
+.filter-sheet #diffChips { display: none; }   /* desktop feed uses the header cycle button */
 
 /* second row: language/topic tracks */
 .chips-tracks { padding-top: 0; }
@@ -899,7 +899,7 @@ kbd {
     text-transform: uppercase; letter-spacing: 0.08em;
     margin: 12px 0 6px;
   }
-  #diffChips { display: flex; }
+  .filter-sheet #diffChips { display: flex; }
   .filter-sheet .chips { flex-wrap: wrap; overflow: visible; padding: 0; }
   .filter-sheet .stats {
     display: flex; flex-wrap: wrap; gap: 8px;
@@ -959,4 +959,28 @@ kbd {
     background: color-mix(in srgb, var(--lime) 10%, transparent);
   }
   .mnav-link:active { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+}
+
+/* ── the filter tab ──────────────────────────────────────────── */
+.flt-wrap {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 18px 20px 40px;
+  z-index: 1;
+}
+.flt-stats { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.flt-stat-cap { font-size: 11px; color: var(--muted); font-weight: 400; }
+.flt-label {
+  font-family: var(--mono); font-size: 10.5px; color: var(--faint);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  margin: 18px 0 8px;
+}
+.flt-chips { flex-wrap: wrap; padding: 0; max-width: none; }
+.flt-apply { display: block; width: 100%; margin-top: 24px; }
+.flt-reset {
+  display: block; width: 100%; margin-top: 10px;
+  color: var(--muted);
 }
